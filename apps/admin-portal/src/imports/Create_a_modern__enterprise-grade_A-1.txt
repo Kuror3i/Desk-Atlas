@@ -1,0 +1,380 @@
+Create a modern, enterprise-grade Admin Dashboard UI for a Self-Service Kiosk & Co-Working Space Management Platform. The interface should function as the central control system for workspace operations, reservations, kiosk monitoring, member management, pantry POS operations, and system administration.
+
+The design should feel like a clean, futuristic SaaS workspace operating system used in premium smart offices and automated co-working environments.
+
+# Updated Design Direction
+
+## UI Style & Theme
+
+* Light mode UI
+* Primary background: pure white / soft off-white
+* Clean enterprise SaaS aesthetic
+* Minimal yet highly functional layout
+* Soft shadows and layered depth
+* Glassmorphism used subtly for cards/modals
+* Modern productivity software feel
+* Apple + Notion + Linear + Nexudus-inspired enterprise interface
+* Premium startup dashboard quality
+* Responsive ultra-wide admin dashboard
+* Fully interactive and functional UI components
+* Every button, modal, filter, table, dropdown, and toggle should appear operational and production-ready
+
+## Color Palette
+
+* Background: White / Light Gray
+* Primary Accent: Electric Blue
+* Secondary Accent: Violet / Indigo
+* Success: Green
+* Warning: Orange
+* Error: Red
+* Text: Dark Gray / Black
+* Borders: Soft neutral gray
+* Hover states: subtle blue tint
+
+# Sidebar Navigation
+
+Create a sleek collapsible vertical navigation sidebar with categorized modules and modern icons.
+
+## Main Navigation Categories
+
+### Operations
+
+* Dashboard Overview
+* Reservations
+* Workspace Management
+* Layout Editor
+* Self-Service Kiosks
+* Pantry & Miscellaneous POS
+* Visitor Logs
+
+### Users & Access
+
+* Members & Tenants
+* Membership Database
+* Staff Management
+* Security & Access Control
+
+### Business Management
+
+* Billing & Payments
+* Reports
+* Notifications
+
+### System
+
+* Maintenance & Diagnostics
+* System Settings
+
+Use optimized categorization with grouped sections, expandable menus, and quick-access shortcuts.
+
+# Main Dashboard Overview
+
+## KPI Overview Cards
+
+Display clean animated KPI cards showing:
+
+* Active Members
+* Active Tenants
+* Occupied Desks
+* Available Rooms
+* Daily Reservations
+* Active Kiosks
+* Pantry Sales Today
+* Revenue Today
+* Visitor Check-ins
+* Pending Support Tickets
+* Staff Online
+* Devices Requiring Maintenance
+
+Use:
+
+* modern statistic cards
+* smooth hover animations
+* status indicators
+* progress rings
+* operational badges
+
+REMOVE:
+
+* AI accuracy rate
+* predictive forecasting
+* analytics graphs related to AI
+
+# 1. Workspace & Layout Editing Tools
+
+Create an advanced workspace management section featuring:
+
+* Interactive floor plan editor
+* Drag-and-drop desk arrangement
+* Workspace zoning tools
+* Meeting room configuration
+* Capacity management
+* Workspace type customization
+* Real-time occupancy visualization
+* Editable workspace maps
+* Reservation hotspot indicators
+* Workspace status monitoring
+
+Use:
+
+* clean architectural layout visuals
+* smart office overlays
+* modular editing panels
+* floating configuration drawers
+
+# 2. Reservation Rule Management
+
+Include a reservation control panel featuring:
+
+* Booking rule configuration
+* Time slot management
+* Grace period settings
+* No-show policy management
+* Reservation approval workflow
+* QR-based reservation verification
+* Booking restrictions
+* Peak-hour scheduling controls
+* Membership-based booking permissions
+* Dynamic reservation calendar
+
+Display:
+
+* scheduling widgets
+* timeline booking views
+* interactive calendars
+* reservation queues
+* approval panels
+
+# 3. Staff/Admin Account Control
+
+Create a staff management interface with:
+
+* Role-based access control (RBAC)
+* Admin permission settings
+* Staff activity logs
+* Multi-admin management
+* Account status indicators
+* Employee access monitoring
+* Authentication controls
+* User profile management
+* Admin hierarchy system
+* Secure access panel
+
+Use:
+
+* enterprise security UI components
+* permission matrices
+* clean account tables
+* access control modals
+
+# 4. Reports & Operational Insights
+
+Design a lightweight reporting center showing:
+
+* Workspace utilization summaries
+* Revenue summaries
+* Membership activity
+* Reservation history
+* Peak usage periods
+* Kiosk operational reports
+* Pantry POS sales summaries
+* Staff activity reports
+* Maintenance logs
+
+REMOVE:
+
+* predictive analytics
+* AI recommendation analytics
+* forecasting graphs
+* machine learning visualizations
+
+Use:
+
+* clean report tables
+* simple progress indicators
+* operational summaries
+* downloadable reports
+* export panels
+
+# 5. System-Wide Monitoring Dashboard
+
+Show a centralized monitoring interface featuring:
+
+* Real-time kiosk status
+* Online/offline indicators
+* Workspace occupancy tracking
+* Security alerts
+* Device monitoring
+* Incident notifications
+* Live activity feed
+* Maintenance queue
+* Smart device status indicators
+
+For kiosk maintenance:
+
+* Replace automated AI maintenance forecasting with MANUAL CHECKING workflows
+* Include:
+
+  * maintenance checklist system
+  * manual inspection logs
+  * technician assignment panel
+  * maintenance scheduling
+  * issue ticketing system
+  * repair history records
+  * device status updates
+
+Use:
+
+* clean command-center layout
+* operational tables
+* maintenance workflow cards
+* device inspection panels
+
+# 6. Pantry & Miscellaneous POS System
+
+Add a dedicated Pantry/Miscellaneous POS module featuring:
+
+## Pantry Features
+
+* Snack and beverage inventory
+* POS checkout interface
+* Barcode/QR scanning
+* Inventory stock management
+* Low-stock alerts
+* Daily sales summary
+* Digital receipts
+* Cash and e-wallet payment support
+* Product categorization
+* Sales transaction history
+
+## Miscellaneous Sales
+
+* Printing services
+* Locker rentals
+* Office supplies
+* Equipment rentals
+* Miscellaneous service billing
+
+Use:
+
+* compact POS layout
+* tablet-friendly cashier interface
+* modern checkout system
+* inventory management tables
+* sales widgets
+
+# 7. Members & Tenants Database System
+
+Create a comprehensive database management module for members and tenants.
+
+## Member Database Features
+
+* Full member profiles
+* Tenant company profiles
+* Membership type categorization
+* Membership validity tracking
+* Membership start date
+* Membership expiration date
+* Manual membership tagging
+* Optional admin notes
+* Active/inactive membership indicators
+* Renewal reminders
+* Reservation history
+* Billing history
+* Workspace usage history
+
+## Manual Membership Tagging
+
+Allow admins to manually assign tags such as:
+
+* VIP
+* Student
+* Corporate
+* Premium
+* Trial
+* Delinquent
+* Frequent Visitor
+* Partner Tenant
+
+Display:
+
+* advanced searchable data tables
+* profile side panels
+* filterable membership lists
+* tag-based categorization
+* membership status badges
+
+# Self-Service Kiosk Management
+
+Include:
+
+* Connected kiosk devices
+* Touchscreen preview panels
+* Remote kiosk controls
+* Device diagnostics
+* QR/RFID authentication logs
+* Kiosk uptime monitoring
+* Maintenance request system
+* Manual maintenance verification workflow
+* Device issue reporting
+* Remote restart controls
+
+REMOVE:
+
+* facial recognition verification
+* AI-powered kiosk analytics
+
+# Additional UI Components
+
+Include:
+
+* Smart global search bars
+* Advanced filtering system
+* Toggle switches
+* Real-time notifications
+* Activity timeline
+* Floating widgets
+* Modal windows
+* Expandable data tables
+* Interactive cards
+* Multi-panel layout
+* Bulk action controls
+* Export/import tools
+
+# Scene Composition
+
+Show:
+
+* Large ultra-wide admin dashboard
+* Desktop enterprise workspace
+* Tablet management preview
+* Mobile companion app preview
+* Floating workspace operation windows
+* Modern co-working ecosystem visuals
+* Premium smart office atmosphere
+
+# Database Structure Requirements
+
+Generate realistic database schemas and sample data for:
+
+* Members
+* Tenants
+* Reservations
+* Pantry inventory
+* POS transactions
+* Maintenance logs
+* Staff/admin accounts
+* Workspace inventory
+* Membership subscriptions
+
+Membership records should explicitly display:
+
+* Membership availed date
+* Membership expiration date
+* Membership duration
+* Membership status
+* Optional admin-assigned tags
+
+# Visual Keywords
+
+Light mode SaaS dashboard, enterprise workspace management system, coworking administration platform, smart office operating system, clean enterprise UI, futuristic productivity dashboard, modern admin panel, coworking SaaS interface, kiosk management system, pantry POS dashboard, workspace reservation system, enterprise control center, premium startup UI, modern workspace analytics, Nexudus-inspired interface, operational management dashboard, smart office admin system.

@@ -1,0 +1,10 @@
+{
+  "name": "@deskatlas/validation",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "scripts": {
+    "build": "echo 'Building validation package'",
+    "lint": "echo 'Linting validation package'",
+    "typecheck": "echo 'Typechecking validation package'"
+  }
+}

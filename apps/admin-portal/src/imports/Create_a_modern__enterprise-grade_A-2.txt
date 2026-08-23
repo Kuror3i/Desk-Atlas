@@ -1,0 +1,433 @@
+Create a modern, enterprise-grade Admin Dashboard UI for a Self-Service Kiosk & Co-Working Space Management Platform. The platform should function as the central operating system for workspace reservations, kiosk operations, member management, pantry POS transactions, billing, and workspace administration.
+
+The system should feel like a premium smart-office SaaS platform similar to modern enterprise workspace tools and Nexudus-inspired coworking systems.
+
+# Overall Design Direction
+
+## UI Theme
+
+* FULL LIGHT MODE ONLY
+* Pure white background
+* Minimal neutral gray surfaces
+* Clean enterprise SaaS aesthetic
+* Modern productivity software appearance
+* Bright professional workspace atmosphere
+* Soft shadows
+* Rounded cards and panels
+* Subtle glassmorphism only where necessary
+* Highly readable spacing and typography
+* Responsive ultra-wide dashboard layout
+* Production-ready UX/UI
+* ALL buttons, tables, filters, toggles, modals, forms, and workflows must appear fully functional
+
+## Design Inspiration
+
+* Nexudus
+* Linear
+* Notion
+* Stripe Dashboard
+* Slack Admin
+* Modern workspace SaaS platforms
+
+## Color Palette
+
+* Background: White
+* Surface: Light gray / neutral white
+* Primary Accent: Electric Blue
+* Secondary Accent: Violet
+* Success: Green
+* Warning: Orange
+* Error: Red
+* Text: Dark Gray / Black
+* Borders: Soft Gray
+
+REMOVE:
+
+* dark mode UI
+* deep navy backgrounds
+* cyberpunk visuals
+* holographic overlays
+* glowing neon-heavy effects
+
+# Sidebar Navigation
+
+Create a clean categorized vertical sidebar with modern enterprise icons.
+
+## Operations
+
+* Dashboard Overview
+* Reservations
+* Workspace Management
+* Layout Editor
+* Self-Service Kiosks
+* Pantry & Miscellaneous POS
+* Visitor Logs
+
+## Users & Access
+
+* Members & Tenants
+* Membership Database
+* Staff Management
+* Security & Access Control
+
+## Business
+
+* Billing & Payments
+* Reports
+* Notifications
+
+## System
+
+* Maintenance & Diagnostics
+* System Settings
+
+# Dashboard Overview
+
+## KPI Cards ONLY (NO GRAPHS)
+
+Display clean KPI statistic cards for:
+
+* Active Members
+* Active Tenants
+* Occupied Desks
+* Available Rooms
+* Daily Reservations
+* Active Kiosks
+* Pantry Sales Today
+* Revenue Today
+* Visitor Check-ins
+* Pending Support Tickets
+* Staff Online
+* Devices Requiring Maintenance
+
+REMOVE:
+
+* ALL graphs
+* ALL analytics charts
+* line charts
+* donut charts
+* AI forecasting
+* predictive analytics
+* AI accuracy rate
+* trend graphs
+
+Use:
+
+* clean statistic cards
+* operational badges
+* mini status indicators
+* progress states
+* hover animations
+
+# Workspace & Layout Editor
+
+Create an advanced workspace layout management system.
+
+## Layout Editor Features
+
+### Upload Layout Option
+
+Allow admins to:
+
+* Upload workspace floor plans via:
+
+  * PNG
+  * JPG
+  * JPEG
+* Preview uploaded floor plan
+* Resize and reposition layouts
+* Overlay workspace elements on top of uploaded images
+
+### Interactive Layout Builder
+
+Include:
+
+* Drag-and-drop workspace builder
+* Interactive desk placement
+* Meeting room placement
+* Workspace zoning
+* Custom labels
+* Capacity configuration
+* Reservation hotspot mapping
+* Interactive clickable map
+* Live occupancy markers
+
+### Workspace Elements
+
+Allow placement of:
+
+* Hot desks
+* Dedicated desks
+* Meeting rooms
+* Private offices
+* Pantry area
+* Lounge area
+* Reception area
+* Kiosk locations
+* Locker sections
+
+Use:
+
+* modular editing panels
+* floating toolbars
+* editable layers
+* zoomable workspace map
+* clean architectural UI
+
+# Reservation Rule Management
+
+Include:
+
+* Booking rules
+* Time slot management
+* Grace period settings
+* No-show policy management
+* Reservation approval workflows
+* QR-based reservation verification
+* Membership-based booking permissions
+* Dynamic scheduling calendar
+* Reservation queue management
+
+# Self-Service Kiosk Checkout Workflow
+
+Create a realistic automated checkout workflow using QR verification.
+
+## Checkout Process Flow
+
+### Step 1 — User Checkout Scan
+
+When the workspace user scans their QR code at the kiosk before leaving:
+
+System should:
+
+* Detect active reservation/session
+* Calculate workspace usage charges
+* Detect unpaid pantry purchases
+* Detect miscellaneous charges
+* Generate total outstanding balance
+
+### Step 2 — Balance Popup
+
+After QR scan:
+
+Display a popup modal showing:
+
+* Workspace usage fee
+* Pantry purchases
+* Miscellaneous charges
+* Total balance
+* Payment methods available
+* Transaction breakdown
+
+The popup should feel modern, clean, and easy to understand.
+
+### Step 3 — Email Receipt / Record
+
+Automatically send email after billing is generated.
+
+Email should include:
+
+* Reservation details
+* Workspace usage duration
+* Pantry purchases
+* Total charges
+* Payment confirmation
+* Checkout timestamp
+* Digital receipt/reference number
+
+Purpose:
+
+* Transparency
+* Billing records
+* User accountability
+
+### Step 4 — Payment Settlement
+
+Allow payment through:
+
+* E-wallet
+* Card
+* Cash verification
+* Digital payment gateway
+
+### Step 5 — Final QR Rescan
+
+After successful payment:
+
+* User rescans QR code
+* System validates payment completion
+* Checkout status becomes:
+
+  * COMPLETED
+* Exit permission granted
+* Reservation session automatically closed
+
+Display:
+
+* successful checkout confirmation screen
+* payment verification badge
+* completed session receipt
+
+# Pantry & Miscellaneous POS System
+
+Create a dedicated Pantry/Miscellaneous POS module.
+
+## Pantry Features
+
+* Snack inventory
+* Beverage inventory
+* POS checkout
+* Barcode scanning
+* QR payment support
+* Inventory tracking
+* Low-stock alerts
+* Transaction history
+* Receipt generation
+
+## Miscellaneous Services
+
+* Printing services
+* Locker rentals
+* Equipment rentals
+* Office supply purchases
+
+## POS Integration with Checkout
+
+The pantry system must integrate directly with kiosk checkout billing.
+
+If user has unpaid pantry balance:
+
+* automatically include it during checkout scan
+* show charges in popup modal
+* require settlement before final checkout completion
+
+# Members & Tenants Database
+
+Create a full database management module.
+
+## Membership Information
+
+Display:
+
+* Membership availed date
+* Membership expiration date
+* Membership duration
+* Membership status
+* Renewal reminders
+* Reservation history
+* Billing history
+* Workspace usage history
+
+## Manual Membership Tagging
+
+Allow admins to assign custom tags:
+
+* VIP
+* Premium
+* Corporate
+* Student
+* Trial
+* Frequent Visitor
+* Delinquent
+* Partner Tenant
+
+Use:
+
+* searchable tables
+* filterable records
+* profile side panels
+* membership status badges
+
+# Maintenance & Diagnostics
+
+Replace AI forecasting maintenance with MANUAL maintenance workflows.
+
+Include:
+
+* Manual inspection logs
+* Maintenance checklist
+* Technician assignments
+* Repair scheduling
+* Device issue reporting
+* Maintenance ticket system
+* Repair history
+* Device health status
+
+# Reports Section
+
+Use:
+
+* simple operational summaries
+* clean report tables
+* downloadable reports
+* export options
+
+REMOVE:
+
+* graphs
+* AI analytics
+* predictive dashboards
+* machine learning reports
+
+# Self-Service Kiosk Management
+
+Include:
+
+* Connected kiosk devices
+* Touchscreen previews
+* Remote controls
+* Device diagnostics
+* QR authentication logs
+* Uptime monitoring
+* Maintenance status
+* Manual maintenance verification
+* Device restart controls
+
+REMOVE:
+
+* facial recognition
+* AI recommendation systems
+* predictive AI monitoring
+
+# Additional UI Components
+
+Include:
+
+* Smart global search
+* Filters
+* Toggle switches
+* Real-time notifications
+* Expandable data tables
+* Interactive cards
+* Modal windows
+* Bulk actions
+* Import/export tools
+* Activity logs
+
+# Database Requirements
+
+Generate realistic database schemas and sample records for:
+
+* Members
+* Tenants
+* Reservations
+* Pantry inventory
+* POS transactions
+* Maintenance logs
+* Workspace inventory
+* Membership subscriptions
+* Checkout/payment records
+
+Checkout/payment records should include:
+
+* QR scan timestamps
+* Outstanding balance
+* Pantry charges
+* Workspace charges
+* Payment status
+* Email receipt status
+* Final checkout confirmation timestamp
+
+# Visual Keywords
+
+Light mode SaaS dashboard, clean coworking management system, enterprise workspace platform, Nexudus-inspired interface, modern workspace reservation system, coworking admin dashboard, workspace billing system, kiosk checkout workflow, pantry POS integration, smart office admin panel, white enterprise dashboard UI, modern productivity SaaS, coworking operating system, premium admin dashboard, interactive workspace map editor.

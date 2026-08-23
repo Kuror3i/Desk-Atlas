@@ -1,0 +1,208 @@
+Create a modern, enterprise-grade Admin Dashboard UI for a Self-Service Kiosk & Co-Working Space Management Platform. The interface should function as the central control system for workspace operations, reservations, kiosk monitoring, staff management, analytics, and AI-assisted automation.
+
+The design should feel like a futuristic SaaS workspace operating system used in smart offices and automated co-working environments.
+
+Design Style
+Modern SaaS dashboard
+Futuristic enterprise interface
+Dark mode UI with neon highlights
+Glassmorphism panels
+Soft shadows and layered depth
+Minimal yet information-dense layout
+Smart workspace operating system aesthetic
+Premium startup / tech company feel
+High-end UI/UX case study quality
+Behance and Dribbble presentation style
+Responsive widescreen admin dashboard
+Color Palette
+Primary: Electric Blue
+Secondary: Purple / Violet
+Accent: Neon Green
+Background: Dark charcoal / deep navy
+Text: White and light gray
+Alert colors:
+Green = operational
+Orange = warning
+Red = critical issue
+Sidebar Navigation
+
+Include a sleek vertical navigation panel with icons for:
+
+Dashboard Overview
+Workspace Management
+Layout Editor
+Reservations
+Self-Service Kiosks
+Members & Tenants
+Visitor Logs
+Staff Management
+Billing & Payments
+Analytics & Reports
+AI Recommendation System
+Security & Access Control
+Notifications
+System Settings
+Main Dashboard Overview
+KPI Overview Cards
+
+Show real-time system metrics:
+
+Active Members
+Occupied Desks
+Available Rooms
+Daily Reservations
+Active Kiosks
+Revenue Today
+Visitor Check-ins
+Pending Support Tickets
+Staff Online
+AI System Accuracy Rate
+
+Use animated statistic cards with glowing trend indicators and modern icons.
+
+1. Workspace & Layout Editing Tools
+
+Create an advanced workspace management section featuring:
+
+Interactive floor plan editor
+Drag-and-drop desk arrangement
+Workspace zoning tools
+Meeting room configuration
+Capacity management
+Workspace type customization
+Live occupancy visualization
+Heatmap analytics
+Smart layout recommendations
+Real-time workspace monitoring
+
+Show editable smart office maps with futuristic UI overlays.
+
+2. Reservation Rule Management
+
+Include a dedicated reservation control panel featuring:
+
+Booking rule configuration
+Time slot management
+Grace period settings
+No-show policy management
+Reservation approval workflow
+QR-based reservation verification
+Automated booking restrictions
+Peak-hour scheduling controls
+Membership-based booking permissions
+Dynamic reservation calendar
+
+Display smart scheduling widgets and timeline-based booking controls.
+
+3. Staff/Admin Account Control
+
+Create a staff management interface with:
+
+Role-based access control (RBAC)
+Admin permission settings
+Staff activity logs
+Multi-admin management
+Account status indicators
+Employee access monitoring
+Authentication controls
+User profile management
+Admin hierarchy system
+Secure access panel
+
+Include security-focused enterprise UI elements.
+
+4. Analytics & Reports
+
+Design a powerful analytics center showing:
+
+Workspace utilization analytics
+Revenue dashboards
+Membership growth charts
+Reservation trends
+Peak usage hours
+Kiosk performance analytics
+User engagement metrics
+Staff performance reports
+AI recommendation accuracy
+Predictive analytics graphs
+
+Use:
+
+Interactive line charts
+Donut graphs
+Heatmaps
+Real-time data visualizations
+Floating analytics widgets
+5. System-Wide Monitoring Dashboard
+
+Show a centralized operations monitoring interface with:
+
+Real-time kiosk status
+Online/offline indicators
+Device health monitoring
+Workspace occupancy tracking
+Security alerts
+Network/system performance
+Live activity feed
+Incident notifications
+IoT sensor indicators
+Smart building monitoring
+
+Add cyber-tech command center visuals with holographic data overlays.
+
+6. AI Recommendation System Oversight
+
+Create an AI management module featuring:
+
+AI-generated workspace recommendations
+Occupancy prediction system
+Smart booking suggestions
+Automated room allocation
+AI accuracy monitoring
+Recommendation approval/rejection controls
+Machine learning analytics
+Behavioral usage insights
+Predictive demand forecasting
+AI system status monitoring
+
+Display futuristic AI analytics panels and intelligent automation visuals.
+
+Self-Service Kiosk Management
+
+Include:
+
+Connected kiosk devices
+Touchscreen preview panels
+Remote kiosk controls
+Device diagnostics
+QR/RFID authentication logs
+Facial recognition verification
+Kiosk uptime analytics
+Maintenance alerts
+Additional UI Components
+
+Include:
+
+Smart search bars
+Advanced filtering system
+Toggle switches
+Real-time notifications
+Activity timeline
+Floating widgets
+Modal windows
+Multi-panel layout
+Expandable data tables
+Interactive cards
+Scene Composition
+
+Show:
+
+Large ultra-wide admin dashboard
+Tablet monitoring interface
+Mobile companion app preview
+Multiple floating workspace analytics windows
+Smart office ecosystem visuals
+Futuristic co-working control center atmosphere
+Visual Keywords
+
+Futuristic SaaS dashboard, coworking management platform, smart office operating system, kiosk administration interface, AI workspace analytics, enterprise control center, cyber workspace UI, workspace automation dashboard, glassmorphism admin panel, intelligent reservation system, smart building analytics, high fidelity UI UX design, modern enterprise dashboard, tech startup interface, advanced admin panel, AI-powered workspace management.

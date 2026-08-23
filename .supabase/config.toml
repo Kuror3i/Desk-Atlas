@@ -1,0 +1,3 @@
+project_ref = "xklwyqltwgkdmtohvrly"
+# Created as a minimal fallback so local tools can detect the project.
+# To fully link via the Supabase CLI, run `supabase login` then `supabase link --project-ref xklwyqltwgkdmtohvrly`.

@@ -1,0 +1,11 @@
+{
+  "name": "@deskatlas/ui",
+  "version": "0.1.0",
+  "main": "src/index.tsx",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'Building ui package'",
+    "lint": "echo 'Linting ui package'",
+    "typecheck": "echo 'Typechecking ui package'"
+  }
+}

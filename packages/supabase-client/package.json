@@ -1,0 +1,10 @@
+{
+  "name": "@deskatlas/supabase-client",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "scripts": {
+    "build": "echo 'Building supabase client package'",
+    "lint": "echo 'Linting supabase client package'",
+    "typecheck": "echo 'Typechecking supabase client package'"
+  }
+}
