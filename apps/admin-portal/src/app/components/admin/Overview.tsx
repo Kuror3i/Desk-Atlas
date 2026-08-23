@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Activity,
 } from 'lucide-react';
+import { MockReservations } from '../MockReservations';
 
 const dashboardMetrics = [
   {
@@ -208,7 +209,7 @@ export function Overview() {
                   View all activity →
                 </button>
 
-                <SupabaseReservations />
+                <MockReservations />
               </div>
             </div>
       </div>

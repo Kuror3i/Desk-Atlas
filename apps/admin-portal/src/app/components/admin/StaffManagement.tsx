@@ -94,40 +94,17 @@ export function StaffManagement() {
       const currentDate = new Date();
       const monthYear = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-      // Call server endpoint to create staff (server sets auth_user_id)
-      const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-      const devUid = `dev-${Date.now()}`;
-      fetch(`${apiBase}/admin/create-staff`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-dev-auth-uid': devUid,
-        },
-        body: JSON.stringify({ role: formData.role.toLowerCase(), display_name: formData.name }),
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data?.ok && data.user) {
-            const newAccount: StaffAccount = {
-              id: data.user.staff_account_id ?? `${Date.now()}`,
-              name: data.user.display_name ?? formData.name,
-              email: formData.email,
-              role: formData.role,
-              lastActive: 'Just now',
-              joinedDate: monthYear,
-              lastLogin: 'Never',
-            };
-            setAccounts([...accounts, newAccount]);
-            alert(`Account created successfully!`);
-          } else {
-            console.error('Create staff failed', data);
-            alert('Failed to create staff account');
-          }
-        })
-        .catch((err) => {
-          console.error(err);
-          alert('Error creating staff account');
-        });
+      const newAccount: StaffAccount = {
+        id: `mock-${Date.now()}`,
+        name: formData.name,
+        email: formData.email,
+        role: formData.role,
+        lastActive: 'Just now',
+        joinedDate: monthYear,
+        lastLogin: 'Never',
+      };
+      setAccounts([...accounts, newAccount]);
+      alert(`Account created successfully!`);
     } else {
       setAccounts(accounts.map(acc =>
         acc.id === selectedAccount?.id

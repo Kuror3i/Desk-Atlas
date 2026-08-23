@@ -76,14 +76,13 @@ const recommendationMap: Record<string, RecommendationType[]> = {
   'MR2': ['meeting-rooms']
 };
 
-const recommendationLabels: Record<RecommendationType, string> = {
+const recommendationLabels: Record<Exclude<RecommendationType, null>, string> = {
   window: 'Near the window',
   cr: 'Near the CR',
   reception: 'Near the reception/front desk',
   quiet: 'In a quieter area',
   private: 'More private corner workspace',
-  'meeting-rooms': 'Near meeting rooms',
-  null: ''
+  'meeting-rooms': 'Near meeting rooms'
 };
 
 // Mock schedule data

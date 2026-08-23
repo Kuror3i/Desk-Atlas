@@ -1,9 +1,9 @@
-import React from 'react';
+import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth, Role } from './AuthProvider';
 
 type Props = {
-  children: JSX.Element;
+  children: ReactNode;
   allowedRoles?: Role[];
 };
 
