@@ -1,10 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MapPin, Edit, Trash2, DoorOpen, Layers, X, Copy } from 'lucide-react';
+import type { AdminWorkspaceSpace } from '@deskatlas/domain';
+import {
+  deactivateAdminWorkspaceSpace,
+  duplicateAdminWorkspaceSpace,
+  fetchAdminWorkspaceSpaces,
+  updateAdminWorkspaceSpace,
+} from '../../lib/adminWorkspaceApi';
 
 type RecommendationTag = 'Near Window' | 'Near CR' | 'Near Reception' | 'Quiet Area' | 'Private Area' | 'Near Meeting Rooms';
 
 type Space = {
   id: string;
+  templateId?: string;
+  floorId?: string;
+  instanceCode?: string;
   name: string;
   type: 'desk' | 'meeting-room' | 'phone-booth';
   zone: string;
@@ -107,6 +117,19 @@ const availableTags: RecommendationTag[] = [
 
 const availableZones = ['Zone A', 'Zone B', 'Meeting Rooms'];
 
+type RequiredBackendSpace = Space & Required<Pick<Space, 'templateId' | 'floorId' | 'instanceCode'>>;
+
+function toSpace(space: AdminWorkspaceSpace): Space {
+  return {
+    ...space,
+    recommendations: (space.recommendations ?? []).filter(isRecommendationTag),
+  };
+}
+
+function isRecommendationTag(tag: string): tag is RecommendationTag {
+  return availableTags.includes(tag as RecommendationTag);
+}
+
 export function WorkspaceManagement() {
   const [spaces, setSpaces] = useState<Space[]>(initialSpaces);
   const [selectedType, setSelectedType] = useState<string>('all');
@@ -122,6 +145,24 @@ export function WorkspaceManagement() {
     status: 'available' as Space['status'],
     recommendations: [] as RecommendationTag[],
   });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchAdminWorkspaceSpaces()
+      .then((backendSpaces) => {
+        if (isMounted && backendSpaces.length > 0) {
+          setSpaces(backendSpaces.map(toSpace));
+        }
+      })
+      .catch((error) => {
+        console.error('Unable to load workspace data from backend', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const filteredSpaces = spaces.filter(
     (space) => selectedType === 'all' || space.type === selectedType
@@ -148,7 +189,7 @@ export function WorkspaceManagement() {
     setShowEditModal(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!selectedSpace) return;
 
     if (!editForm.name.trim()) {
@@ -156,10 +197,17 @@ export function WorkspaceManagement() {
       return;
     }
 
-    setSpaces(spaces.map(space =>
-      space.id === selectedSpace.id
-        ? {
-            ...space,
+    try {
+      const updatedSpace = selectedSpace.templateId
+        ? toSpace(await updateAdminWorkspaceSpace(selectedSpace as RequiredBackendSpace, {
+            name: editForm.name,
+            hourlyRate: editForm.hourlyRate,
+            capacity: editForm.capacity,
+            status: editForm.status,
+            recommendations: editForm.recommendations,
+          }))
+        : {
+            ...selectedSpace,
             name: editForm.name,
             zone: editForm.zone,
             hourlyRate: editForm.hourlyRate,
@@ -167,13 +215,18 @@ export function WorkspaceManagement() {
             capacity: editForm.capacity > 0 ? editForm.capacity : undefined,
             status: editForm.status,
             recommendations: editForm.recommendations,
-          }
-        : space
-    ));
+          };
 
-    alert(`Workspace "${editForm.name}" updated successfully!`);
-    setShowEditModal(false);
-    setSelectedSpace(null);
+      setSpaces(spaces.map(space =>
+        space.id === selectedSpace.id ? updatedSpace : space
+      ));
+
+      alert(`Workspace "${editForm.name}" updated successfully!`);
+      setShowEditModal(false);
+      setSelectedSpace(null);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Workspace update failed');
+    }
   };
 
   const handleDeleteClick = (space: Space) => {
@@ -181,37 +234,56 @@ export function WorkspaceManagement() {
     setShowDeleteConfirm(true);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!selectedSpace) return;
 
-    setSpaces(spaces.filter(space => space.id !== selectedSpace.id));
-    alert(`Workspace "${selectedSpace.name}" has been deleted successfully`);
-    setShowDeleteConfirm(false);
-    setSelectedSpace(null);
+    try {
+      if (selectedSpace.templateId) {
+        await deactivateAdminWorkspaceSpace(selectedSpace.id);
+      }
+      setSpaces(spaces.filter(space => space.id !== selectedSpace.id));
+      alert(`Workspace "${selectedSpace.name}" has been deleted successfully`);
+      setShowDeleteConfirm(false);
+      setSelectedSpace(null);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Workspace delete failed');
+    }
   };
 
-  const handleDuplicateClick = (space: Space) => {
+  const handleDuplicateClick = async (space: Space) => {
     const duplicateNumber = spaces.filter(s => s.name.startsWith(space.name)).length + 1;
-    const newSpace: Space = {
-      ...space,
-      id: `${space.id}-copy-${Date.now()}`,
-      name: `${space.name} (Copy ${duplicateNumber})`,
-    };
+    const draftName = `${space.name} (Copy ${duplicateNumber})`;
+    const draftCode = `${space.instanceCode ?? space.id}-COPY-${Date.now().toString().slice(-6)}`;
 
-    setSpaces([...spaces, newSpace]);
+    try {
+      const newSpace: Space = space.templateId
+        ? toSpace(await duplicateAdminWorkspaceSpace(space as RequiredBackendSpace, {
+            instanceCode: draftCode,
+            displayName: draftName,
+          }))
+        : {
+            ...space,
+            id: `${space.id}-copy-${Date.now()}`,
+            name: draftName,
+          };
 
-    // Immediately open edit modal for the duplicated space
-    setSelectedSpace(newSpace);
-    setEditForm({
-      name: newSpace.name,
-      zone: newSpace.zone,
-      hourlyRate: newSpace.hourlyRate,
-      dayRate: newSpace.dayRate,
-      capacity: newSpace.capacity || 0,
-      status: newSpace.status,
-      recommendations: newSpace.recommendations || [],
-    });
-    setShowEditModal(true);
+      setSpaces([...spaces, newSpace]);
+
+      // Immediately open edit modal for the duplicated space
+      setSelectedSpace(newSpace);
+      setEditForm({
+        name: newSpace.name,
+        zone: newSpace.zone,
+        hourlyRate: newSpace.hourlyRate,
+        dayRate: newSpace.dayRate,
+        capacity: newSpace.capacity || 0,
+        status: newSpace.status,
+        recommendations: newSpace.recommendations || [],
+      });
+      setShowEditModal(true);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Workspace duplicate failed');
+    }
   };
 
   const toggleRecommendation = (tag: RecommendationTag) => {

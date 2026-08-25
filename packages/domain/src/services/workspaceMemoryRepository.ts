@@ -1,0 +1,146 @@
+import type {
+  CreateWorkspaceInstanceInput,
+  CreateWorkspaceTemplateInput,
+  DuplicateWorkspaceInstanceInput,
+  Floor,
+  UpdateWorkspaceInstanceInput,
+  UpdateWorkspaceTemplateInput,
+  WorkspaceCatalog,
+  WorkspaceInstanceDetails,
+  WorkspaceOperationalStatus,
+  WorkspaceRepository,
+  WorkspaceTemplate,
+} from '../models/workspace';
+import { WorkspaceConflictError } from './workspaceService';
+
+export class InMemoryWorkspaceRepository implements WorkspaceRepository {
+  private templates = new Map<string, WorkspaceTemplate>();
+  private floors = new Map<string, Floor>();
+  private instances = new Map<string, WorkspaceInstanceDetails>();
+  private sequence = 1;
+
+  constructor() {
+    this.floors.set('floor-default', {
+      id: 'floor-default',
+      name: 'Main Floor',
+      floorNumber: 1,
+      displayOrder: 0,
+      isActive: true,
+    });
+  }
+
+  async listCatalog(): Promise<WorkspaceCatalog> {
+    return {
+      templates: Array.from(this.templates.values()),
+      floors: Array.from(this.floors.values()),
+      instances: Array.from(this.instances.values()),
+    };
+  }
+
+  async createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate> {
+    const template: WorkspaceTemplate = {
+      id: `template-${this.sequence++}`,
+      name: input.name,
+      description: input.description ?? null,
+      photoPath: input.photoPath ?? null,
+      capacity: input.capacity,
+      rateAmount: input.rateAmount,
+      pricingUnit: input.pricingUnit ?? 'HOURLY',
+      defaultShape: input.defaultShape ?? 'desk',
+      defaultColor: input.defaultColor ?? '#009689',
+      defaultStyle: input.defaultStyle ?? {},
+      isActive: input.isActive ?? true,
+    };
+    this.templates.set(template.id, template);
+    return template;
+  }
+
+  async updateTemplate(id: string, input: UpdateWorkspaceTemplateInput): Promise<WorkspaceTemplate> {
+    const template = this.requireTemplate(id);
+    const updated: WorkspaceTemplate = { ...template, ...input };
+    this.templates.set(id, updated);
+    this.refreshInstanceTemplate(id);
+    return updated;
+  }
+
+  async createInstance(input: CreateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails> {
+    this.requireUniqueCode(input.instanceCode);
+    const template = this.requireTemplate(input.templateId);
+    const floor = this.requireFloor(input.floorId);
+    const instance: WorkspaceInstanceDetails = {
+      id: `instance-${this.sequence++}`,
+      templateId: template.id,
+      floorId: floor.id,
+      instanceCode: input.instanceCode,
+      displayName: input.displayName,
+      operationalStatus: input.operationalStatus ?? 'ACTIVE',
+      template,
+      floor,
+    };
+    this.instances.set(instance.id, instance);
+    return instance;
+  }
+
+  async updateInstance(id: string, input: UpdateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails> {
+    const existing = this.requireInstance(id);
+    const updated: WorkspaceInstanceDetails = {
+      ...existing,
+      displayName: input.displayName ?? existing.displayName,
+      operationalStatus: input.operationalStatus ?? existing.operationalStatus,
+    };
+    this.instances.set(id, updated);
+    return updated;
+  }
+
+  async deactivateInstance(id: string): Promise<WorkspaceInstanceDetails> {
+    return this.updateInstance(id, { operationalStatus: 'INACTIVE' });
+  }
+
+  async duplicateInstance(
+    id: string,
+    input: DuplicateWorkspaceInstanceInput
+  ): Promise<WorkspaceInstanceDetails> {
+    const existing = this.requireInstance(id);
+    return this.createInstance({
+      templateId: existing.templateId,
+      floorId: existing.floorId,
+      instanceCode: input.instanceCode,
+      displayName: input.displayName,
+      operationalStatus: existing.operationalStatus as WorkspaceOperationalStatus,
+    });
+  }
+
+  private refreshInstanceTemplate(templateId: string) {
+    const template = this.requireTemplate(templateId);
+    for (const [id, instance] of this.instances) {
+      if (instance.templateId === templateId) {
+        this.instances.set(id, { ...instance, template });
+      }
+    }
+  }
+
+  private requireUniqueCode(instanceCode: string) {
+    const exists = Array.from(this.instances.values()).some(
+      (instance) => instance.instanceCode.toLowerCase() === instanceCode.toLowerCase()
+    );
+    if (exists) throw new WorkspaceConflictError(`Instance code already exists: ${instanceCode}`);
+  }
+
+  private requireTemplate(id: string): WorkspaceTemplate {
+    const template = this.templates.get(id);
+    if (!template) throw new Error(`Template not found: ${id}`);
+    return template;
+  }
+
+  private requireFloor(id: string): Floor {
+    const floor = this.floors.get(id);
+    if (!floor) throw new Error(`Floor not found: ${id}`);
+    return floor;
+  }
+
+  private requireInstance(id: string): WorkspaceInstanceDetails {
+    const instance = this.instances.get(id);
+    if (!instance) throw new Error(`Instance not found: ${id}`);
+    return instance;
+  }
+}

@@ -1,7 +1,13 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Save, Trash2, Edit2, Copy, X, MapPin, Upload, Grid3x3, Trash } from 'lucide-react';
+import type { FloorMap, MapElementInput } from '@deskatlas/domain';
+import { fetchAdminMapDraft, saveAdminMapDraft } from '../../lib/adminMapApi';
 
 type SpaceType = 'desk' | 'meeting-room' | 'phone-booth';
+
+const MAP_CANVAS_WIDTH = 1600;
+const MAP_CANVAS_HEIGHT = 1000;
+const MAP_GRID_SIZE = 20;
 
 type FloorSpace = {
   id: string;
@@ -14,6 +20,7 @@ type FloorSpace = {
   zone: string;
   hourlyRate: number;
   dayRate: number;
+  workspaceInstanceId?: string | null;
 };
 
 type ZoneArea = {
@@ -71,6 +78,22 @@ export function LayoutEditor() {
   const [newZoneName, setNewZoneName] = useState('');
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasLoadedMapDraftRef = useRef(false);
+
+  useEffect(() => {
+    if (step !== 'builder' || hasLoadedMapDraftRef.current) return;
+    hasLoadedMapDraftRef.current = true;
+
+    fetchAdminMapDraft()
+      .then((draft) => {
+        if (!draft) return;
+        setSpaces(mapDraftToSpaces(draft));
+        setZones(mapDraftToZones(draft));
+      })
+      .catch((error) => {
+        console.warn('Unable to load saved map draft', error);
+      });
+  }, [step]);
 
   const checkWorkspaceInZone = (workspace: FloorSpace): string | null => {
     if (selectedTemplate !== 'zones' || zones.length === 0) return null;
@@ -244,8 +267,19 @@ export function LayoutEditor() {
     alert(`${editingSpace.label} has been deleted`);
   };
 
-  const handleSaveLayout = () => {
-    alert(`Layout saved successfully!\n\n${spaces.length} workspaces configured`);
+  const handleSaveLayout = async () => {
+    try {
+      await saveAdminMapDraft({
+        canvasWidth: MAP_CANVAS_WIDTH,
+        canvasHeight: MAP_CANVAS_HEIGHT,
+        gridSize: MAP_GRID_SIZE,
+        elements: [...zones.map(zoneToMapElement), ...spaces.map(spaceToMapElement)],
+      });
+      alert(`Layout saved successfully!\n\n${spaces.length} workspaces configured`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save layout';
+      alert(message);
+    }
   };
 
   const handleCanvasClick = () => {
@@ -847,4 +881,97 @@ export function LayoutEditor() {
       )}
     </div>
   );
+}
+
+function spaceToMapElement(space: FloorSpace, index: number): MapElementInput {
+  return {
+    id: persistableElementId(space.id),
+    elementRole: space.workspaceInstanceId ? 'WORKSPACE' : 'EDITOR_AID',
+    elementType: space.type,
+    workspaceInstanceId: space.workspaceInstanceId ?? null,
+    x: space.x,
+    y: space.y,
+    width: space.width,
+    height: space.height,
+    rotation: 0,
+    zIndex: index + 100,
+    label: space.label,
+    properties: {
+      kind: 'workspace-shape',
+      spaceType: space.type,
+      zone: space.zone,
+      hourlyRate: space.hourlyRate,
+      dayRate: space.dayRate,
+    },
+    isLocked: false,
+  };
+}
+
+function zoneToMapElement(zone: ZoneArea, index: number): MapElementInput {
+  return {
+    id: persistableElementId(zone.id),
+    elementRole: 'STRUCTURE',
+    elementType: 'zone',
+    x: zone.x,
+    y: zone.y,
+    width: zone.width,
+    height: zone.height,
+    rotation: 0,
+    zIndex: index,
+    label: zone.name,
+    properties: {
+      color: zone.color,
+    },
+    isLocked: false,
+  };
+}
+
+function mapDraftToSpaces(draft: FloorMap): FloorSpace[] {
+  return draft.elements
+    .filter((element) =>
+      element.elementRole === 'WORKSPACE' ||
+      (element.elementRole === 'EDITOR_AID' && element.properties.kind === 'workspace-shape')
+    )
+    .map((element) => {
+      const spaceType = normalizeSpaceType(element.properties.spaceType, element.elementType);
+      return {
+        id: element.id,
+        type: spaceType,
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height,
+        label: element.label ?? spaceLabels[spaceType],
+        zone: typeof element.properties.zone === 'string' ? element.properties.zone : 'Zone A',
+        hourlyRate: typeof element.properties.hourlyRate === 'number' ? element.properties.hourlyRate : 0,
+        dayRate: typeof element.properties.dayRate === 'number' ? element.properties.dayRate : 0,
+        workspaceInstanceId: element.workspaceInstanceId,
+      };
+    });
+}
+
+function mapDraftToZones(draft: FloorMap): ZoneArea[] {
+  return draft.elements
+    .filter((element) => element.elementRole === 'STRUCTURE' && element.elementType === 'zone')
+    .map((element) => ({
+      id: element.id,
+      name: element.label ?? 'Zone',
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+      color: typeof element.properties.color === 'string' ? element.properties.color : 'rgba(0, 150, 137, 0.1)',
+    }));
+}
+
+function normalizeSpaceType(value: unknown, fallback: string): SpaceType {
+  if (value === 'desk' || value === 'meeting-room' || value === 'phone-booth') return value;
+  if (fallback === 'meeting-room' || fallback === 'phone-booth') return fallback;
+  return 'desk';
+}
+
+function persistableElementId(id: string): string | undefined {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : undefined;
 }

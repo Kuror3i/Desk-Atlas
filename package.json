@@ -10,7 +10,9 @@
     "dev:kiosk": "pnpm --filter @deskatlas/kiosk dev",
     "dev:staff": "pnpm --filter @deskatlas/staff-dashboard dev",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test:m01": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m01-tests --rootDir . tests/m01-workspace.test.ts && node node_modules/.cache/deskatlas-m01-tests/tests/m01-workspace.test.js",
+    "test:m02": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m02-tests --rootDir . tests/m02-map.test.ts && node node_modules/.cache/deskatlas-m02-tests/tests/m02-map.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
