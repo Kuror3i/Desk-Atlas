@@ -14,6 +14,7 @@ export type RecommendationType =
 
 export interface Desk {
   id: string;
+  workspaceInstanceId?: string;
   name: string;
   type: 'desk' | 'meeting-room' | 'phone-booth';
   zone: string;

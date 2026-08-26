@@ -1,0 +1,112 @@
+import type {
+  WorkspaceAvailabilityBlockReason,
+  WorkspaceInstanceDetails,
+} from './workspace';
+
+export interface BusinessAvailabilitySettings {
+  timezone: string;
+  bookingIntervalMinutes: number;
+}
+
+export interface OperatingHoursInterval {
+  id: string;
+  dayOfWeek: number;
+  opensAt: string;
+  closesAt: string;
+  isActive: boolean;
+}
+
+export interface ScheduleBlock {
+  id: string;
+  scope: 'BUSINESS' | 'WORKSPACE';
+  workspaceInstanceId: string | null;
+  blockType: string;
+  startAt: string;
+  endAt: string;
+  reason: string | null;
+}
+
+export interface BlockingReservationWindow {
+  reservationId: string;
+  reservationStatus: 'CONFIRMED' | 'CHECKED_IN';
+  startAt: string;
+  endAt: string;
+}
+
+export interface AvailabilityRepository {
+  getWorkspaceInstance(instanceId: string): Promise<WorkspaceInstanceDetails | null>;
+  getBusinessSettings(): Promise<BusinessAvailabilitySettings>;
+  listOperatingHours(dayOfWeek: number): Promise<OperatingHoursInterval[]>;
+  listScheduleBlocks(
+    workspaceInstanceId: string,
+    rangeStartIso: string,
+    rangeEndIso: string
+  ): Promise<ScheduleBlock[]>;
+  listBlockingReservations(
+    workspaceInstanceId: string,
+    rangeStartIso: string,
+    rangeEndIso: string
+  ): Promise<BlockingReservationWindow[]>;
+}
+
+export type AvailabilityDateReason =
+  | 'AVAILABLE'
+  | 'WORKSPACE_NOT_BOOKABLE'
+  | 'BUSINESS_CLOSED'
+  | 'NO_TIME_REMAINING'
+  | 'BLOCKED';
+
+export interface AvailableDate {
+  date: string;
+  isAvailable: boolean;
+  reason: AvailabilityDateReason;
+  firstAvailableTime: string | null;
+}
+
+export type TimeSlotBlockingReason =
+  | 'WORKSPACE_NOT_BOOKABLE'
+  | 'PAST_TIME'
+  | 'BUSINESS_CLOSED'
+  | 'SCHEDULE_BLOCKED'
+  | 'RESERVATION_CONFLICT';
+
+export interface AvailableTimeSlot {
+  startTime: string;
+  endTime: string;
+  isAvailable: boolean;
+  blockingReason: TimeSlotBlockingReason | null;
+}
+
+export interface DateAvailabilityQuery {
+  workspaceInstanceId: string;
+  startDate: string;
+  endDate: string;
+  durationMinutes: number;
+  nowIso?: string;
+}
+
+export interface TimeAvailabilityQuery {
+  workspaceInstanceId: string;
+  date: string;
+  durationMinutes: number;
+  nowIso?: string;
+}
+
+export interface DateAvailabilityResult {
+  workspaceInstanceId: string;
+  timezone: string;
+  bookingIntervalMinutes: number;
+  workspaceIsBookable: boolean;
+  workspaceBlockingReason: WorkspaceAvailabilityBlockReason | null;
+  dates: AvailableDate[];
+}
+
+export interface TimeAvailabilityResult {
+  workspaceInstanceId: string;
+  date: string;
+  timezone: string;
+  bookingIntervalMinutes: number;
+  workspaceIsBookable: boolean;
+  workspaceBlockingReason: WorkspaceAvailabilityBlockReason | null;
+  slots: AvailableTimeSlot[];
+}

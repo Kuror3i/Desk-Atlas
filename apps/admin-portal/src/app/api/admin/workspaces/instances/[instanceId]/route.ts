@@ -10,8 +10,8 @@ export async function PATCH(
 ) {
   try {
     const { instanceId } = await context.params;
-    const instance = await getAdminWorkspaceService().updateInstance(instanceId, await request.json());
-    return NextResponse.json({ instance });
+    const result = await getAdminWorkspaceService().updateManagedInstance(instanceId, await request.json());
+    return NextResponse.json(result);
   } catch (error) {
     return workspaceErrorResponse(error);
   }

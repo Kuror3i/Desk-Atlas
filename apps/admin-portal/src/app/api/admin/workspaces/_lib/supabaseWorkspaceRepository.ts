@@ -1,10 +1,12 @@
 import type {
+  WorkspaceAuditLogEntry,
   CreateWorkspaceInstanceInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
   Floor,
   UpdateWorkspaceInstanceInput,
   UpdateWorkspaceTemplateInput,
+  WorkspaceStatusImpactReservation,
   WorkspaceCatalog,
   WorkspaceInstanceDetails,
   WorkspaceOperationalStatus,
@@ -50,6 +52,18 @@ type InstanceRow = {
   floor?: FloorRow;
 };
 
+type FutureReservationRow = {
+  id: string;
+  reservation_id: string;
+  start_at: string;
+  end_at: string;
+  reservation: {
+    id: string;
+    reference_code: string;
+    status: 'CONFIRMED';
+  };
+};
+
 export class SupabaseWorkspaceRepository implements WorkspaceRepository {
   private readonly restUrl: string;
   private readonly serviceRoleKey: string;
@@ -84,6 +98,15 @@ export class SupabaseWorkspaceRepository implements WorkspaceRepository {
       floors: floors.map(mapFloor),
       instances: instances.map(mapInstanceDetails),
     };
+  }
+
+  async getInstance(id: string): Promise<WorkspaceInstanceDetails> {
+    const [row] = await this.request<InstanceRow[]>(
+      `/workspace_instances?id=eq.${encodeURIComponent(id)}&select=*,template:workspace_templates(*),floor:floors(*)&limit=1`
+    );
+
+    if (!row) throw new Error(`Instance not found: ${id}`);
+    return mapInstanceDetails(row);
   }
 
   async createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate> {
@@ -148,6 +171,42 @@ export class SupabaseWorkspaceRepository implements WorkspaceRepository {
       instanceCode: input.instanceCode,
       displayName: input.displayName,
       operationalStatus: existing.operational_status,
+    });
+  }
+
+  async listFutureConfirmedReservations(
+    instanceId: string,
+    fromIso: string
+  ): Promise<WorkspaceStatusImpactReservation[]> {
+    const rows = await this.request<FutureReservationRow[]>(
+      `/reservation_candidates?select=id,reservation_id,start_at,end_at,reservation:reservations!inner(id,reference_code,status)&workspace_instance_id=eq.${encodeURIComponent(
+        instanceId
+      )}&start_at=gt.${encodeURIComponent(fromIso)}&reservation.status=eq.CONFIRMED&order=start_at.asc`
+    );
+
+    return rows.map((row) => ({
+      reservationId: row.reservation_id,
+      reservationReferenceCode: row.reservation.reference_code,
+      candidateId: row.id,
+      startAt: row.start_at,
+      endAt: row.end_at,
+      reservationStatus: row.reservation.status,
+    }));
+  }
+
+  async appendAuditLog(entry: WorkspaceAuditLogEntry): Promise<void> {
+    await this.request<unknown>('/audit_logs', {
+      method: 'POST',
+      body: JSON.stringify({
+        actor_user_id: entry.actorUserId,
+        actor_role: entry.actorRole,
+        action: entry.action,
+        entity_type: entry.entityType,
+        entity_id: entry.entityId,
+        metadata: entry.metadata,
+        created_at: entry.createdAt,
+      }),
+      prefer: 'return=minimal',
     });
   }
 

@@ -4,10 +4,16 @@ import { Filter, X, Calendar as CalendarIcon, ChevronDown } from "lucide-react";
 import { WorkspaceMap } from "../components/WorkspaceMap";
 import { WorkspaceDetailPanel } from "../components/WorkspaceDetailPanel";
 import { DayPicker } from "react-day-picker";
+import { fetchPublishedMap } from "../lib/publishedMapApi";
+import {
+  fetchDateAvailability,
+  fetchTimeAvailability,
+} from "../lib/availabilityApi";
 import "react-day-picker/dist/style.css";
 
 export interface Workspace {
   id: string;
+  workspaceInstanceId: string;
   name: string;
   type: "zone-a" | "zone-b" | "meeting-room" | "booth";
   status: "available" | "reserved" | "occupied" | "unavailable";
@@ -23,6 +29,7 @@ export interface Workspace {
 export function WorkspaceDiscoveryPage() {
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const [showCalendar, setShowCalendar] = useState(false);
   const [showTimeDropdown, setShowTimeDropdown] = useState(false);
   const [filters, setFilters] = useState({
@@ -32,6 +39,9 @@ export function WorkspaceDiscoveryPage() {
     availableOnly: false,
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(() => generateFallbackWorkspaces());
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
 
   const calendarRef = useRef<HTMLDivElement>(null);
   const timeDropdownRef = useRef<HTMLDivElement>(null);
@@ -52,6 +62,102 @@ export function WorkspaceDiscoveryPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      setAvailableDates([]);
+      return;
+    }
+
+    const durationHours = Number(filters.duration);
+    if (!Number.isFinite(durationHours) || durationHours <= 0) {
+      setAvailableDates([]);
+      return;
+    }
+
+    let isMounted = true;
+    const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const monthEnd = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+
+    fetchDateAvailability({
+      workspaceInstanceId: selectedWorkspace.workspaceInstanceId,
+      startDate: formatDate(monthStart),
+      endDate: formatDate(monthEnd),
+      durationMinutes: durationHours * 60,
+    })
+      .then((result) => {
+        if (!isMounted) return;
+        setAvailableDates(result.dates.filter((date) => date.isAvailable).map((date) => date.date));
+      })
+      .catch((error) => {
+        console.warn("Unable to load customer date availability", error);
+        if (isMounted) {
+          setAvailableDates([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [calendarMonth, filters.duration, selectedWorkspace]);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      setAvailableTimes([]);
+      return;
+    }
+
+    const durationHours = Number(filters.duration);
+    if (!Number.isFinite(durationHours) || durationHours <= 0) {
+      setAvailableTimes([]);
+      return;
+    }
+
+    let isMounted = true;
+    fetchTimeAvailability({
+      workspaceInstanceId: selectedWorkspace.workspaceInstanceId,
+      date: formatDate(selectedDate),
+      durationMinutes: durationHours * 60,
+    })
+      .then((result) => {
+        if (!isMounted) return;
+        const nextTimes = result.slots.filter((slot) => slot.isAvailable).map((slot) => slot.startTime);
+        setAvailableTimes(nextTimes);
+        if (nextTimes.length > 0 && !nextTimes.includes(filters.time)) {
+          setFilters((current) => ({ ...current, time: nextTimes[0] }));
+        }
+      })
+      .catch((error) => {
+        console.warn("Unable to load customer time availability", error);
+        if (isMounted) {
+          setAvailableTimes([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [filters.duration, filters.time, selectedDate, selectedWorkspace]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchPublishedMap()
+      .then(({ published }) => {
+        if (!isMounted) return;
+        const publishedWorkspaces = mapPublishedFloorMapToWorkspaces(published);
+        if (publishedWorkspaces.length > 0) {
+          setWorkspaces(publishedWorkspaces);
+        }
+      })
+      .catch((error) => {
+        console.warn("Unable to load published customer map", error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const timeSlots = [
     "07:00", "07:30", "08:00", "08:30", "09:00", "09:30",
     "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
@@ -59,118 +165,6 @@ export function WorkspaceDiscoveryPage() {
     "16:00", "16:30", "17:00", "17:30", "18:00", "18:30",
     "19:00", "19:30", "20:00", "20:30", "21:00", "21:30"
   ];
-
-  const generateWorkspaces = (): Workspace[] => {
-    const workspaces: Workspace[] = [];
-    const statuses: Workspace["status"][] = ["available", "reserved", "occupied", "unavailable"];
-
-    // Zone A desks (A1-A12)
-    for (let i = 1; i <= 12; i++) {
-      workspaces.push({
-        id: `A${i}`,
-        name: `Zone A - Desk ${i}`,
-        type: "zone-a",
-        status: i === 3 ? "unavailable" : i === 5 ? "reserved" : i === 8 ? "occupied" : i === 11 ? "unavailable" : "available",
-        description: "Shared workspace with high-speed WiFi and power outlets",
-        rate: "$15/day",
-        image: "https://images.unsplash.com/photo-1562664348-2188b99b5157?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHw3fHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      });
-    }
-
-    // Zone B desks (B1-B12)
-    for (let i = 1; i <= 12; i++) {
-      workspaces.push({
-        id: `B${i}`,
-        name: `Zone B - Desk ${i}`,
-        type: "zone-b",
-        status: i === 4 ? "reserved" : i === 10 ? "unavailable" : i === 11 ? "unavailable" : "available",
-        description: "Shared workspace with high-speed WiFi and power outlets",
-        rate: "$15/day",
-        image: "https://images.unsplash.com/photo-1562664348-2188b99b5157?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHw3fHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      });
-    }
-
-    // Meeting rooms
-    workspaces.push(
-      {
-        id: "Meeting-1",
-        name: "Meeting Room 1",
-        type: "meeting-room",
-        status: "available",
-        description: "Private room for 4-8 people with AV equipment",
-        rate: "$60/hour",
-        image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      },
-      {
-        id: "Meeting-2",
-        name: "Meeting Room 2",
-        type: "meeting-room",
-        status: "reserved",
-        description: "Private room for 4-8 people with AV equipment",
-        rate: "$60/hour",
-        image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      },
-      {
-        id: "Meeting-3",
-        name: "Meeting Room 3",
-        type: "meeting-room",
-        status: "available",
-        description: "Private room for 4-8 people with AV equipment",
-        rate: "$60/hour",
-        image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      },
-      {
-        id: "Booth-1",
-        name: "Booth 1",
-        type: "booth",
-        status: "available",
-        description: "Private booth for focused work",
-        rate: "$25/day",
-        image: "https://images.unsplash.com/photo-1626187777040-ffb7cb2c5450?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxMHx8Y293b3JraW5nJTIwc3BhY2UlMjBtb2Rlcm58ZW58MXx8fHwxNzc4ODUzMzc0fDA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      },
-      {
-        id: "Booth-2",
-        name: "Booth 2",
-        type: "booth",
-        status: "available",
-        description: "Private booth for focused work",
-        rate: "$25/day",
-        image: "https://images.unsplash.com/photo-1626187777040-ffb7cb2c5450?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxMHx8Y293b3JraW5nJTIwc3BhY2UlMjBtb2Rlcm58ZW58MXx8fHwxNzc4ODUzMzc0fDA&ixlib=rb-4.1.0&q=80&w=1080",
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-      }
-    );
-
-    return workspaces;
-  };
-
-  const workspaces = generateWorkspaces();
 
   const filteredWorkspaces = workspaces.filter((workspace) => {
     if (filters.type !== "all" && workspace.type !== filters.type) return false;
@@ -236,12 +230,21 @@ export function WorkspaceDiscoveryPage() {
                 <div className="absolute top-full mt-2 z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-4">
                   <DayPicker
                     mode="single"
+                    month={calendarMonth}
+                    onMonthChange={setCalendarMonth}
                     selected={selectedDate}
                     onSelect={(date) => {
                       if (date) {
                         setSelectedDate(date);
                         setShowCalendar(false);
                       }
+                    }}
+                    disabled={(date) => {
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      if (date < today) return true;
+                      if (!selectedWorkspace) return false;
+                      return !availableDates.includes(formatDate(date));
                     }}
                     className="rdp-custom"
                   />
@@ -264,12 +267,16 @@ export function WorkspaceDiscoveryPage() {
                     <button
                       key={time}
                       onClick={() => {
+                        if (selectedWorkspace && !availableTimes.includes(time)) {
+                          return;
+                        }
                         setFilters({ ...filters, time });
                         setShowTimeDropdown(false);
                       }}
                       className={`w-full px-4 py-2 text-left hover:bg-gray-100 ${
                         filters.time === time ? "bg-teal-50 text-teal-600" : "text-gray-700"
                       }`}
+                      disabled={Boolean(selectedWorkspace) && !availableTimes.includes(time)}
                     >
                       {time}
                     </button>
@@ -335,4 +342,160 @@ export function WorkspaceDiscoveryPage() {
       </div>
     </div>
   );
+}
+
+function generateFallbackWorkspaces(): Workspace[] {
+  const workspaces: Workspace[] = [];
+
+  for (let i = 1; i <= 12; i++) {
+    workspaces.push({
+      id: `A${i}`,
+      workspaceInstanceId: `A${i}`,
+      name: `Zone A - Desk ${i}`,
+      type: "zone-a",
+      status: i === 3 ? "unavailable" : i === 5 ? "reserved" : i === 8 ? "occupied" : i === 11 ? "unavailable" : "available",
+      description: "Shared workspace with high-speed WiFi and power outlets",
+      rate: "$15/day",
+      image: "https://images.unsplash.com/photo-1562664348-2188b99b5157?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHw3fHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    });
+  }
+
+  for (let i = 1; i <= 12; i++) {
+    workspaces.push({
+      id: `B${i}`,
+      workspaceInstanceId: `B${i}`,
+      name: `Zone B - Desk ${i}`,
+      type: "zone-b",
+      status: i === 4 ? "reserved" : i === 10 ? "unavailable" : i === 11 ? "unavailable" : "available",
+      description: "Shared workspace with high-speed WiFi and power outlets",
+      rate: "$15/day",
+      image: "https://images.unsplash.com/photo-1562664348-2188b99b5157?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHw3fHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    });
+  }
+
+  workspaces.push(
+    {
+      id: "Meeting-1",
+      workspaceInstanceId: "Meeting-1",
+      name: "Meeting Room 1",
+      type: "meeting-room",
+      status: "available",
+      description: "Private room for 4-8 people with AV equipment",
+      rate: "$60/hour",
+      image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    {
+      id: "Meeting-2",
+      workspaceInstanceId: "Meeting-2",
+      name: "Meeting Room 2",
+      type: "meeting-room",
+      status: "reserved",
+      description: "Private room for 4-8 people with AV equipment",
+      rate: "$60/hour",
+      image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    {
+      id: "Meeting-3",
+      workspaceInstanceId: "Meeting-3",
+      name: "Meeting Room 3",
+      type: "meeting-room",
+      status: "available",
+      description: "Private room for 4-8 people with AV equipment",
+      rate: "$60/hour",
+      image: "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwzfHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    {
+      id: "Booth-1",
+      workspaceInstanceId: "Booth-1",
+      name: "Booth 1",
+      type: "booth",
+      status: "available",
+      description: "Private booth for focused work",
+      rate: "$25/day",
+      image: "https://images.unsplash.com/photo-1626187777040-ffb7cb2c5450?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxMHx8Y293b3JraW5nJTIwc3BhY2UlMjBtb2Rlcm58ZW58MXx8fHwxNzc4ODUzMzc0fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    {
+      id: "Booth-2",
+      workspaceInstanceId: "Booth-2",
+      name: "Booth 2",
+      type: "booth",
+      status: "available",
+      description: "Private booth for focused work",
+      rate: "$25/day",
+      image: "https://images.unsplash.com/photo-1626187777040-ffb7cb2c5450?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxMHx8Y293b3JraW5nJTIwc3BhY2UlMjBtb2Rlcm58ZW58MXx8fHwxNzc4ODUzMzc0fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    }
+  );
+
+  return workspaces;
+}
+
+function mapPublishedFloorMapToWorkspaces(
+  published: Awaited<ReturnType<typeof fetchPublishedMap>>["published"]
+): Workspace[] {
+  return published.elements
+    .filter((element) => element.elementRole === "WORKSPACE" && element.workspace)
+    .map((element) => {
+      const workspace = element.workspace!;
+      return {
+        id: workspace.instanceCode,
+        workspaceInstanceId: workspace.workspaceInstanceId,
+        name: workspace.displayName,
+        type: mapCustomerWorkspaceType(element.elementType),
+        status: workspace.isBookable ? "available" : "unavailable",
+        description: workspace.description ?? "Workspace details coming soon",
+        rate: formatRate(workspace.rateAmount, workspace.pricingUnit),
+        image:
+          workspace.photoPath && workspace.photoPath.length > 0
+            ? workspace.photoPath
+            : "https://images.unsplash.com/photo-1562664348-2188b99b5157?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHw3fHxjb3dvcmtpbmclMjBzcGFjZSUyMG1vZGVybnxlbnwxfHx8fDE3Nzg4NTMzNzR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height,
+      };
+    });
+}
+
+function formatDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function mapCustomerWorkspaceType(elementType: string): Workspace["type"] {
+  if (elementType === "meeting-room") return "meeting-room";
+  if (elementType === "phone-booth") return "booth";
+  return elementType.toLowerCase().includes("b") ? "zone-b" : "zone-a";
+}
+
+function formatRate(rateAmount: number, pricingUnit: "HOURLY"): string {
+  return pricingUnit === "HOURLY" ? `$${rateAmount}/hour` : `$${rateAmount}`;
 }

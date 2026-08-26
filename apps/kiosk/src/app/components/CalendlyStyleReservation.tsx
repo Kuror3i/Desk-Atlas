@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, AlertCircle } from 'lucide-react';
 import { WorkspaceMap, type Desk } from './WorkspaceMap';
 import { QRCodeSVG } from 'qrcode.react';
 import { BookingConfirmation } from './BookingConfirmation';
 import { UpcomingScheduleView } from './UpcomingScheduleView';
+import {
+  fetchDateAvailability,
+  fetchTimeAvailability,
+} from '../lib/availabilityApi';
 
 interface CalendlyStyleReservationProps {
   desk: Desk;
@@ -29,29 +33,10 @@ interface ReservationData {
   paymentMethod: PaymentMethod;
 }
 
-// Mock availability data - in real app, this would come from API
 interface SlotInfo {
   time: string;
   isPending: boolean;
 }
-
-const getAvailableSlots = (date: string): SlotInfo[] => {
-  // Simulate some slots being unavailable or pending
-  const allSlots = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
-
-  // Make some slots unavailable or pending for demo
-  if (date === '2026-05-03') {
-    return allSlots
-      .filter(s => !['09:00', '10:00'].includes(s))
-      .map(s => ({ time: s, isPending: s === '14:00' }));
-  }
-  if (date === '2026-05-04') {
-    return allSlots
-      .filter(s => !['11:00', '15:00', '16:00'].includes(s))
-      .map(s => ({ time: s, isPending: s === '14:00' }));
-  }
-  return allSlots.map(s => ({ time: s, isPending: false }));
-};
 
 export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlyStyleReservationProps) {
   const [step, setStep] = useState(0);
@@ -59,9 +44,10 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
     alternativeDesks: []
   });
 
-  const [currentMonth, setCurrentMonth] = useState(new Date(2026, 4, 1)); // May 2026
+  const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [availableSlots, setAvailableSlots] = useState<SlotInfo[]>([]);
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isAlternativeAssigned, setIsAlternativeAssigned] = useState(false);
   const [assignedDesk, setAssignedDesk] = useState(desk.name);
@@ -75,6 +61,7 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
 
   // Generate queue number for cash payments
   const queueNumber = `Q${Math.floor(Math.random() * 9000) + 1000}`;
+  const dateSelectionDurationMinutes = 60;
 
   const totalSteps = 7;
 
@@ -89,17 +76,63 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
     return { daysInMonth, startingDayOfWeek };
   };
 
-  const handleDateSelect = (day: number) => {
-    // Create date in local timezone to avoid UTC conversion issues
+  useEffect(() => {
+    if (!desk.workspaceInstanceId) {
+      setAvailableDates([]);
+      return;
+    }
+
+    let isMounted = true;
+    const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+    const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+
+    fetchDateAvailability({
+      workspaceInstanceId: desk.workspaceInstanceId,
+      startDate: formatDate(monthStart),
+      endDate: formatDate(monthEnd),
+      durationMinutes: dateSelectionDurationMinutes,
+    })
+      .then((result) => {
+        if (!isMounted) return;
+        setAvailableDates(result.dates.filter((date) => date.isAvailable).map((date) => date.date));
+      })
+      .catch((error) => {
+        console.warn('Unable to load kiosk date availability', error);
+        if (isMounted) {
+          setAvailableDates([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentMonth, dateSelectionDurationMinutes, desk.workspaceInstanceId]);
+
+  const handleDateSelect = async (day: number) => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
-    const selected = new Date(year, month, day);
-
-    // Format as YYYY-MM-DD without UTC conversion
     const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     setSelectedDate(dateString);
-    setAvailableSlots(getAvailableSlots(dateString));
+    if (!desk.workspaceInstanceId) {
+      setAvailableSlots([]);
+      return;
+    }
+
+    try {
+      const result = await fetchTimeAvailability({
+        workspaceInstanceId: desk.workspaceInstanceId,
+        date: dateString,
+        durationMinutes: dateSelectionDurationMinutes,
+      });
+      setAvailableSlots(result.slots.filter((slot) => slot.isAvailable).map((slot) => ({
+        time: slot.startTime,
+        isPending: false,
+      })));
+    } catch (error) {
+      console.warn('Unable to load kiosk time availability', error);
+      setAvailableSlots([]);
+    }
   };
 
   const handleTimeSlotSelect = (slotInfo: SlotInfo) => {
@@ -217,13 +250,9 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
     // Create date in local timezone to avoid UTC conversion issues
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth();
-    const selected = new Date(year, month, day);
-
-    // Format as YYYY-MM-DD without UTC conversion
     const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
     setAlternativeDate(dateString);
-    setAlternativeAvailableSlots(getAvailableSlots(dateString));
+    setAlternativeAvailableSlots([]);
     setAlternativeTimeSlot(null);
   };
 
@@ -356,14 +385,16 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
                     const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                     const isPast = dateObj < today;
                     const isSelected = selectedDate === dateString;
+                    const isUnavailable =
+                      Boolean(desk.workspaceInstanceId) && !availableDates.includes(dateString);
 
                     return (
                       <button
                         key={day}
-                        onClick={() => !isPast && handleDateSelect(day)}
-                        disabled={isPast}
+                        onClick={() => !isPast && !isUnavailable && void handleDateSelect(day)}
+                        disabled={isPast || isUnavailable}
                         className={`aspect-square p-2 rounded-lg text-sm font-medium transition-colors ${
-                          isPast
+                          isPast || isUnavailable
                             ? 'text-gray-300 cursor-not-allowed'
                             : isSelected
                               ? 'bg-purple-600 text-white'
@@ -1190,4 +1221,10 @@ export function CalendlyStyleReservation({ desk, allDesks, onBack }: CalendlySty
       </div>
     </div>
   );
+}
+
+function formatDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate()
+  ).padStart(2, '0')}`;
 }

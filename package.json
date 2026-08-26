@@ -12,7 +12,10 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test:m01": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m01-tests --rootDir . tests/m01-workspace.test.ts && node node_modules/.cache/deskatlas-m01-tests/tests/m01-workspace.test.js",
-    "test:m02": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m02-tests --rootDir . tests/m02-map.test.ts && node node_modules/.cache/deskatlas-m02-tests/tests/m02-map.test.js"
+    "test:m02": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m02-tests --rootDir . tests/m02-map.test.ts && node node_modules/.cache/deskatlas-m02-tests/tests/m02-map.test.js",
+    "test:m03": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m03-tests --rootDir . tests/m03-workspace-status.test.ts && node node_modules/.cache/deskatlas-m03-tests/tests/m03-workspace-status.test.js",
+    "test:m04": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m04-tests --rootDir . tests/m04-published-map.test.ts && node node_modules/.cache/deskatlas-m04-tests/tests/m04-published-map.test.js",
+    "test:m05": "tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir node_modules/.cache/deskatlas-m05-tests --rootDir . tests/m05-availability.test.ts && node node_modules/.cache/deskatlas-m05-tests/tests/m05-availability.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

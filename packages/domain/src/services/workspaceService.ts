@@ -1,10 +1,14 @@
 import type {
   AdminWorkspaceSpace,
   AdminWorkspaceStatus,
+  WorkspaceAuditLogEntry,
   AdminWorkspaceType,
   CreateWorkspaceInstanceInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
+  WorkspaceAvailabilityStatus,
+  WorkspaceManagedUpdateResult,
+  WorkspaceStatusImpactReservation,
   UpdateWorkspaceInstanceInput,
   UpdateWorkspaceTemplateInput,
   WorkspaceCatalog,
@@ -21,6 +25,11 @@ const VALID_OPERATIONAL_STATUSES: WorkspaceOperationalStatus[] = [
   'BROKEN',
   'INACTIVE',
 ];
+
+const DEFAULT_AUDIT_ACTOR: Pick<WorkspaceAuditLogEntry, 'actorRole' | 'actorUserId'> = {
+  actorRole: 'SYSTEM',
+  actorUserId: null,
+};
 
 export class WorkspaceValidationError extends Error {
   constructor(message: string) {
@@ -163,6 +172,45 @@ export function mapOperationalStatusToAdminStatus(
   return 'occupied';
 }
 
+export function isOperationalStatusBookable(status: WorkspaceOperationalStatus): boolean {
+  return status === 'ACTIVE';
+}
+
+export function getWorkspaceAvailabilityStatus(
+  instance: WorkspaceInstanceDetails
+): WorkspaceAvailabilityStatus {
+  if (!instance.template.isActive) {
+    return {
+      workspaceInstanceId: instance.id,
+      templateId: instance.templateId,
+      operationalStatus: instance.operationalStatus,
+      templateIsActive: false,
+      isBookable: false,
+      blockingReason: 'TEMPLATE_INACTIVE',
+    };
+  }
+
+  if (!isOperationalStatusBookable(instance.operationalStatus)) {
+    return {
+      workspaceInstanceId: instance.id,
+      templateId: instance.templateId,
+      operationalStatus: instance.operationalStatus,
+      templateIsActive: true,
+      isBookable: false,
+      blockingReason: 'OPERATIONAL_STATUS_BLOCKED',
+    };
+  }
+
+  return {
+    workspaceInstanceId: instance.id,
+    templateId: instance.templateId,
+    operationalStatus: instance.operationalStatus,
+    templateIsActive: true,
+    isBookable: true,
+    blockingReason: null,
+  };
+}
+
 export function inferAdminType(template: WorkspaceTemplate): AdminWorkspaceType {
   const name = `${template.name} ${template.defaultShape}`.toLowerCase();
   if (name.includes('meeting') || name.includes('room')) return 'meeting-room';
@@ -190,6 +238,42 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
     async updateInstance(id: string, input: UpdateWorkspaceInstanceInput) {
       return repository.updateInstance(requireNonBlank(id, 'Instance id'), normalizeUpdateInstanceInput(input));
     },
+    async updateManagedInstance(
+      id: string,
+      input: UpdateWorkspaceInstanceInput,
+      actor: Pick<WorkspaceAuditLogEntry, 'actorRole' | 'actorUserId'> = DEFAULT_AUDIT_ACTOR
+    ): Promise<WorkspaceManagedUpdateResult> {
+      const instanceId = requireNonBlank(id, 'Instance id');
+      const normalizedInput = normalizeUpdateInstanceInput(input);
+      const existing = await repository.getInstance(instanceId);
+      const updated = await repository.updateInstance(instanceId, normalizedInput);
+      const affectedFutureReservations = await getAffectedFutureReservationsIfNeeded(
+        repository,
+        existing,
+        updated
+      );
+
+      const shouldAudit =
+        normalizedInput.displayName !== undefined || normalizedInput.operationalStatus !== undefined;
+
+      if (shouldAudit) {
+        await repository.appendAuditLog({
+          actorRole: actor.actorRole,
+          actorUserId: actor.actorUserId,
+          action: 'workspace.instance.updated',
+          entityType: 'workspace_instance',
+          entityId: instanceId,
+          metadata: buildWorkspaceAuditMetadata(existing, updated, affectedFutureReservations),
+        });
+      }
+
+      return {
+        instance: updated,
+        availability: getWorkspaceAvailabilityStatus(updated),
+        affectedFutureReservations,
+        auditLogged: shouldAudit,
+      };
+    },
     async deactivateInstance(id: string) {
       return repository.deactivateInstance(requireNonBlank(id, 'Instance id'));
     },
@@ -199,6 +283,41 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
         normalizeDuplicateInstanceInput(input)
       );
     },
+  };
+}
+
+async function getAffectedFutureReservationsIfNeeded(
+  repository: WorkspaceRepository,
+  existing: WorkspaceInstanceDetails,
+  updated: WorkspaceInstanceDetails
+): Promise<WorkspaceStatusImpactReservation[]> {
+  if (!isNewlyBlockingTransition(existing.operationalStatus, updated.operationalStatus)) {
+    return [];
+  }
+
+  return repository.listFutureConfirmedReservations(updated.id, new Date().toISOString());
+}
+
+function isNewlyBlockingTransition(
+  previousStatus: WorkspaceOperationalStatus,
+  nextStatus: WorkspaceOperationalStatus
+): boolean {
+  return isOperationalStatusBookable(previousStatus) && !isOperationalStatusBookable(nextStatus);
+}
+
+function buildWorkspaceAuditMetadata(
+  existing: WorkspaceInstanceDetails,
+  updated: WorkspaceInstanceDetails,
+  affectedFutureReservations: WorkspaceStatusImpactReservation[]
+): Record<string, unknown> {
+  return {
+    previousDisplayName: existing.displayName,
+    newDisplayName: updated.displayName,
+    previousOperationalStatus: existing.operationalStatus,
+    newOperationalStatus: updated.operationalStatus,
+    availability: getWorkspaceAvailabilityStatus(updated),
+    affectedFutureReservationCount: affectedFutureReservations.length,
+    affectedFutureReservations,
   };
 }
 

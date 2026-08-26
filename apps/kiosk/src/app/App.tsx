@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { QrCode } from 'lucide-react';
 import { WorkspaceMap, type Desk } from './components/WorkspaceMap';
 import { DeskScheduleModal } from './components/DeskScheduleModal';
@@ -6,9 +6,10 @@ import { BookNowFlow } from './components/BookNowFlow';
 import { CalendlyStyleReservation } from './components/CalendlyStyleReservation';
 import { QRScanFlow } from './components/QRScanFlow';
 import { ReferenceCodeFlow } from './components/ReferenceCodeFlow';
+import { fetchPublishedMap } from './lib/publishedMapApi';
 
 // Mock workspace data
-const mockDesks: Desk[] = [
+const fallbackDesks: Desk[] = [
   // Zone A - Individual Desks (3 rows x 4 columns)
   { id: 'A1', name: 'A1', type: 'desk', zone: 'Zone A', status: 'available', x: 200, y: 100, width: 70, height: 70, hourlyRate: 5, dayRate: 40 },
   { id: 'A2', name: 'A2', type: 'desk', zone: 'Zone A', status: 'available', x: 280, y: 100, width: 70, height: 70, hourlyRate: 5, dayRate: 40 },
@@ -56,6 +57,27 @@ type FlowState = 'map' | 'book-now' | 'book-reservation' | 'qr-scan' | 'referenc
 export default function App() {
   const [selectedDesk, setSelectedDesk] = useState<Desk | null>(null);
   const [flowState, setFlowState] = useState<FlowState>('map');
+  const [desks, setDesks] = useState<Desk[]>(fallbackDesks);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchPublishedMap()
+      .then(({ published }) => {
+        if (!isMounted) return;
+        const publishedDesks = mapPublishedFloorMapToDesks(published);
+        if (publishedDesks.length > 0) {
+          setDesks(publishedDesks);
+        }
+      })
+      .catch((error) => {
+        console.warn('Unable to load kiosk published map', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleDeskClick = (desk: Desk) => {
     setSelectedDesk(desk);
@@ -128,7 +150,7 @@ export default function App() {
           {/* Main Content */}
           <div className="h-[calc(100%-6rem)] p-8">
             <WorkspaceMap
-              desks={mockDesks}
+              desks={desks}
               onDeskClick={handleDeskClick}
               selectedDeskId={selectedDesk?.id}
             />
@@ -147,13 +169,13 @@ export default function App() {
       )}
 
       {flowState === 'book-now' && selectedDesk && (
-        <BookNowFlow desk={selectedDesk} allDesks={mockDesks} onBack={handleBackToMap} />
+        <BookNowFlow desk={selectedDesk} allDesks={desks} onBack={handleBackToMap} />
       )}
 
       {flowState === 'book-reservation' && selectedDesk && (
         <CalendlyStyleReservation
           desk={selectedDesk}
-          allDesks={mockDesks}
+          allDesks={desks}
           onBack={handleBackToMap}
         />
       )}
@@ -161,14 +183,59 @@ export default function App() {
       {flowState === 'qr-scan' && (
         <QRScanFlow
           onBack={handleBackToMap}
-          allDesks={mockDesks}
+          allDesks={desks}
           onSwitchToReferenceCode={handleReferenceCode}
         />
       )}
 
       {flowState === 'reference-code' && (
-        <ReferenceCodeFlow onBack={handleBackToMap} allDesks={mockDesks} />
+        <ReferenceCodeFlow onBack={handleBackToMap} allDesks={desks} />
       )}
     </div>
   );
+}
+
+function mapPublishedFloorMapToDesks(
+  published: Awaited<ReturnType<typeof fetchPublishedMap>>["published"]
+): Desk[] {
+  return published.elements
+    .filter((element) => element.elementRole === 'WORKSPACE' && element.workspace)
+    .map((element) => {
+      const workspace = element.workspace!;
+      return {
+        id: workspace.instanceCode,
+        workspaceInstanceId: workspace.workspaceInstanceId,
+        name: workspace.displayName,
+        type: mapDeskType(element.elementType),
+        zone: getDeskZone(element, workspace.instanceCode),
+        status: workspace.isBookable ? 'available' : 'reserved',
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height,
+        hourlyRate: workspace.rateAmount,
+        dayRate: workspace.rateAmount * 8,
+      };
+    });
+}
+
+function mapDeskType(elementType: string): Desk['type'] {
+  if (elementType === 'meeting-room') return 'meeting-room';
+  if (elementType === 'phone-booth') return 'phone-booth';
+  return 'desk';
+}
+
+function getDeskZone(
+  element: Awaited<ReturnType<typeof fetchPublishedMap>>["published"]["elements"][number],
+  instanceCode: string
+): string {
+  if (typeof element.style.zone === 'string' && element.style.zone.length > 0) {
+    return element.style.zone;
+  }
+
+  if (element.elementType === 'meeting-room' || element.elementType === 'phone-booth') {
+    return 'Meeting Rooms';
+  }
+
+  return instanceCode.toUpperCase().startsWith('B') ? 'Zone B' : 'Zone A';
 }
