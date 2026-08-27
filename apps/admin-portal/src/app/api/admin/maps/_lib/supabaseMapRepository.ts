@@ -252,8 +252,8 @@ export class SupabaseMapRepository implements MapRepository {
       throw new Error(`Supabase map request failed (${response.status}): ${detail}`);
     }
 
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    const text = await response.text();
+    return text ? JSON.parse(text) : (undefined as T);
   }
 }
 
@@ -265,7 +265,7 @@ type FloorMapPayload = {
 
 function mapElementPayload(mapVersionId: string, element: MapElementInput) {
   return {
-    id: element.id,
+    id: element.id ?? crypto.randomUUID(),
     map_version_id: mapVersionId,
     element_role: element.elementRole,
     element_type: element.elementType,

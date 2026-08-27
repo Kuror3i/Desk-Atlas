@@ -1,110 +1,140 @@
-import { useEffect, useState } from 'react';
-import { MapPin, Edit, Trash2, DoorOpen, Layers, X, Copy } from 'lucide-react';
-import type { AdminWorkspaceSpace } from '@deskatlas/domain';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
+  Building2,
+  CheckCircle2,
+  Copy,
+  Edit,
+  Layers,
+  MapPin,
+  Plus,
+  Tag,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react';
+import type {
+  AdminWorkspaceSpace,
+  CreateWorkspaceInstanceInput,
+  CreateWorkspaceTemplateInput,
+  Floor,
+  UpdateWorkspaceTemplateInput,
+  WorkspaceInstanceDetails,
+  WorkspaceManagedUpdateResult,
+  WorkspaceOperationalStatus,
+  WorkspaceStatusImpactReservation,
+  WorkspaceTemplate,
+} from '@deskatlas/domain';
+import {
+  createAdminWorkspaceInstance,
+  createAdminWorkspaceTemplate,
   deactivateAdminWorkspaceSpace,
   duplicateAdminWorkspaceSpace,
-  fetchAdminWorkspaceSpaces,
+  fetchAdminWorkspaceCatalog,
   updateAdminWorkspaceSpace,
+  updateAdminWorkspaceTemplate,
 } from '../../lib/adminWorkspaceApi';
 
-type RecommendationTag = 'Near Window' | 'Near CR' | 'Near Reception' | 'Quiet Area' | 'Private Area' | 'Near Meeting Rooms';
+type RecommendationTag =
+  | 'Near Window'
+  | 'Near CR'
+  | 'Near Reception'
+  | 'Quiet Area'
+  | 'Private Area'
+  | 'Near Meeting Rooms';
 
-type Space = {
-  id: string;
-  templateId?: string;
-  floorId?: string;
-  instanceCode?: string;
-  name: string;
-  type: 'desk' | 'meeting-room' | 'phone-booth';
-  zone: string;
-  capacity?: number;
-  hourlyRate: number;
-  dayRate: number;
-  status: 'available' | 'occupied' | 'maintenance';
-  recommendations?: RecommendationTag[];
+type Space = AdminWorkspaceSpace;
+
+type StatusFilter = 'all' | WorkspaceOperationalStatus;
+
+type ImpactQueueEntry = {
+  instanceId: string;
+  instanceCode: string;
+  workspaceName: string;
+  floorName: string;
+  newOperationalStatus: WorkspaceOperationalStatus;
+  reservations: WorkspaceStatusImpactReservation[];
 };
 
-const initialSpaces: Space[] = [
-  {
-    id: 'A1',
-    name: 'Desk A1',
-    type: 'desk',
-    zone: 'Zone A',
-    hourlyRate: 5,
-    dayRate: 40,
-    status: 'available',
-  },
-  {
-    id: 'A2',
-    name: 'Desk A2',
-    type: 'desk',
-    zone: 'Zone A',
-    hourlyRate: 5,
-    dayRate: 40,
-    status: 'occupied',
-  },
-  {
-    id: 'MR1',
-    name: 'Meeting Room 1',
-    type: 'meeting-room',
-    zone: 'Meeting Rooms',
-    capacity: 6,
-    hourlyRate: 25,
-    dayRate: 180,
-    status: 'available',
-  },
-  {
-    id: 'MR2',
-    name: 'Meeting Room 2',
-    type: 'meeting-room',
-    zone: 'Meeting Rooms',
-    capacity: 8,
-    hourlyRate: 30,
-    dayRate: 220,
-    status: 'occupied',
-  },
-  {
-    id: 'PB1',
-    name: 'Phone Booth 1',
-    type: 'phone-booth',
-    zone: 'Zone A',
-    capacity: 1,
-    hourlyRate: 8,
-    dayRate: 50,
-    status: 'available',
-  },
-  {
-    id: 'B3',
-    name: 'Desk B3',
-    type: 'desk',
-    zone: 'Zone B',
-    hourlyRate: 6,
-    dayRate: 45,
-    status: 'maintenance',
-  },
-];
+type TemplateFormState = {
+  name: string;
+  description: string;
+  photoPath: string;
+  capacity: number;
+  rateAmount: number;
+  defaultShape: string;
+  defaultColor: string;
+  isActive: boolean;
+  recommendations: RecommendationTag[];
+};
+
+type InstanceFormState = {
+  templateId: string;
+  floorId: string;
+  instanceCode: string;
+  displayName: string;
+  operationalStatus: WorkspaceOperationalStatus;
+};
+
+type EditInstanceFormState = {
+  name: string;
+  instanceCode: string;
+  hourlyRate: number;
+  dayRate: number;
+  capacity: number;
+  operationalStatus: WorkspaceOperationalStatus;
+  recommendations: RecommendationTag[];
+};
 
 const typeColors = {
   desk: 'from-[#009689] to-cyan-500',
   'meeting-room': 'from-purple-500 to-pink-500',
   'phone-booth': 'from-orange-500 to-amber-500',
-};
+} as const;
 
-const statusConfig = {
-  available: {
+const statusConfig: Record<
+  WorkspaceOperationalStatus,
+  { label: string; color: string; dot: string; summaryIcon: ReactNode }
+> = {
+  ACTIVE: {
+    label: 'Active',
     color: 'bg-green-100 text-green-700 border-green-200',
     dot: 'bg-green-500',
+    summaryIcon: <CheckCircle2 className="w-8 h-8 text-green-600" />,
   },
-  occupied: {
+  UNAVAILABLE: {
+    label: 'Unavailable',
     color: 'bg-red-100 text-red-700 border-red-200',
     dot: 'bg-red-500',
+    summaryIcon: <AlertCircle className="w-8 h-8 text-red-600" />,
   },
-  maintenance: {
+  MAINTENANCE: {
+    label: 'Maintenance',
     color: 'bg-yellow-100 text-yellow-700 border-yellow-200',
     dot: 'bg-yellow-500',
+    summaryIcon: <Wrench className="w-8 h-8 text-yellow-600" />,
+  },
+  BROKEN: {
+    label: 'Broken',
+    color: 'bg-orange-100 text-orange-700 border-orange-200',
+    dot: 'bg-orange-500',
+    summaryIcon: <Wrench className="w-8 h-8 text-orange-600" />,
+  },
+  INACTIVE: {
+    label: 'Inactive',
+    color: 'bg-gray-100 text-gray-700 border-gray-200',
+    dot: 'bg-gray-500',
+    summaryIcon: <Trash2 className="w-8 h-8 text-gray-600" />,
   },
 };
+
+const operationalStatusOptions: WorkspaceOperationalStatus[] = [
+  'ACTIVE',
+  'UNAVAILABLE',
+  'MAINTENANCE',
+  'BROKEN',
+  'INACTIVE',
+];
 
 const availableTags: RecommendationTag[] = [
   'Near Window',
@@ -115,78 +145,277 @@ const availableTags: RecommendationTag[] = [
   'Near Meeting Rooms',
 ];
 
-const availableZones = ['Zone A', 'Zone B', 'Meeting Rooms'];
+const availableShapes = [
+  { value: 'desk', label: 'Desk' },
+  { value: 'rectangle', label: 'Rectangle' },
+  { value: 'square', label: 'Square' },
+  { value: 'booth', label: 'Booth' },
+];
 
-type RequiredBackendSpace = Space & Required<Pick<Space, 'templateId' | 'floorId' | 'instanceCode'>>;
+const emptyTemplateForm = (): TemplateFormState => ({
+  name: '',
+  description: '',
+  photoPath: '',
+  capacity: 1,
+  rateAmount: 0,
+  defaultShape: 'desk',
+  defaultColor: '#009689',
+  isActive: true,
+  recommendations: [],
+});
 
-function toSpace(space: AdminWorkspaceSpace): Space {
+const emptyInstanceForm = (templates: WorkspaceTemplate[], floors: Floor[]): InstanceFormState => ({
+  templateId: templates[0]?.id ?? '',
+  floorId: floors[0]?.id ?? '',
+  instanceCode: '',
+  displayName: '',
+  operationalStatus: 'ACTIVE',
+});
+
+function inferTemplateType(template: WorkspaceTemplate): Space['type'] {
+  const normalized = `${template.name} ${template.defaultShape}`.toLowerCase();
+  if (normalized.includes('meeting') || normalized.includes('room')) return 'meeting-room';
+  if (normalized.includes('booth') || normalized.includes('phone')) return 'phone-booth';
+  return 'desk';
+}
+
+function extractRecommendationTags(value: Record<string, unknown>): RecommendationTag[] {
+  const tags = value.recommendations;
+  if (!Array.isArray(tags)) return [];
+  return tags.filter((tag): tag is RecommendationTag => availableTags.includes(tag as RecommendationTag));
+}
+
+function toTemplatePayload(form: TemplateFormState): CreateWorkspaceTemplateInput {
   return {
-    ...space,
-    recommendations: (space.recommendations ?? []).filter(isRecommendationTag),
+    name: form.name,
+    description: form.description || null,
+    photoPath: form.photoPath || null,
+    capacity: form.capacity,
+    rateAmount: form.rateAmount,
+    defaultShape: form.defaultShape,
+    defaultColor: form.defaultColor,
+    defaultStyle: { recommendations: form.recommendations },
+    isActive: form.isActive,
   };
 }
 
-function isRecommendationTag(tag: string): tag is RecommendationTag {
-  return availableTags.includes(tag as RecommendationTag);
+function toTemplateUpdatePayload(form: TemplateFormState): UpdateWorkspaceTemplateInput {
+  return {
+    name: form.name,
+    description: form.description || null,
+    photoPath: form.photoPath || null,
+    capacity: form.capacity,
+    rateAmount: form.rateAmount,
+    defaultShape: form.defaultShape,
+    defaultColor: form.defaultColor,
+    defaultStyle: { recommendations: form.recommendations },
+    isActive: form.isActive,
+  };
+}
+
+function buildTemplateForm(template: WorkspaceTemplate): TemplateFormState {
+  return {
+    name: template.name,
+    description: template.description ?? '',
+    photoPath: template.photoPath ?? '',
+    capacity: template.capacity,
+    rateAmount: template.rateAmount,
+    defaultShape: template.defaultShape,
+    defaultColor: template.defaultColor,
+    isActive: template.isActive,
+    recommendations: extractRecommendationTags(template.defaultStyle),
+  };
+}
+
+function buildInstanceEditForm(space: Space, instance: WorkspaceInstanceDetails | undefined): EditInstanceFormState {
+  return {
+    name: space.name,
+    instanceCode: space.instanceCode,
+    hourlyRate: space.hourlyRate,
+    dayRate: space.dayRate,
+    capacity: space.capacity ?? 1,
+    operationalStatus: instance?.operationalStatus ?? 'ACTIVE',
+    recommendations: (space.recommendations ?? []).filter((tag): tag is RecommendationTag =>
+      availableTags.includes(tag as RecommendationTag)
+    ),
+  };
 }
 
 export function WorkspaceManagement() {
-  const [spaces, setSpaces] = useState<Space[]>(initialSpaces);
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
+  const [floors, setFloors] = useState<Floor[]>([]);
+  const [instances, setInstances] = useState<WorkspaceInstanceDetails[]>([]);
   const [selectedType, setSelectedType] = useState<string>('all');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<StatusFilter>('all');
+  const [loading, setLoading] = useState(true);
+  const [statusQueue, setStatusQueue] = useState<ImpactQueueEntry[]>([]);
+
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateModalMode, setTemplateModalMode] = useState<'create' | 'edit'>('create');
+  const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+  const [templateForm, setTemplateForm] = useState<TemplateFormState>(emptyTemplateForm);
+
+  const [showInstanceModal, setShowInstanceModal] = useState(false);
+  const [instanceForm, setInstanceForm] = useState<InstanceFormState>(() => emptyInstanceForm([], []));
+
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [selectedSpace, setSelectedSpace] = useState<Space | null>(null);
-  const [editForm, setEditForm] = useState({
+  const [editForm, setEditForm] = useState<EditInstanceFormState>({
     name: '',
-    zone: '',
+    instanceCode: '',
     hourlyRate: 0,
     dayRate: 0,
-    capacity: 0,
-    status: 'available' as Space['status'],
-    recommendations: [] as RecommendationTag[],
+    capacity: 1,
+    operationalStatus: 'ACTIVE',
+    recommendations: [],
   });
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  async function loadCatalog() {
+    setLoading(true);
+    try {
+      const catalog = await fetchAdminWorkspaceCatalog();
+      setSpaces(catalog.spaces);
+      setTemplates(catalog.templates);
+      setFloors(catalog.floors);
+      setInstances(catalog.instances);
+      setInstanceForm((current) => ({
+        templateId: current.templateId || catalog.templates[0]?.id || '',
+        floorId: current.floorId || catalog.floors[0]?.id || '',
+        instanceCode: current.instanceCode,
+        displayName: current.displayName,
+        operationalStatus: current.operationalStatus,
+      }));
+    } catch (error) {
+      console.error('Unable to load workspace data from backend', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    let isMounted = true;
-
-    fetchAdminWorkspaceSpaces()
-      .then((backendSpaces) => {
-        if (isMounted && backendSpaces.length > 0) {
-          setSpaces(backendSpaces.map(toSpace));
-        }
-      })
-      .catch((error) => {
-        console.error('Unable to load workspace data from backend', error);
-      });
-
-    return () => {
-      isMounted = false;
-    };
+    void loadCatalog();
   }, []);
 
-  const filteredSpaces = spaces.filter(
-    (space) => selectedType === 'all' || space.type === selectedType
+  const instanceById = useMemo(
+    () => new Map(instances.map((instance) => [instance.id, instance])),
+    [instances]
   );
 
+  const filteredSpaces = spaces.filter((space) => {
+    const typeMatch = selectedType === 'all' || space.type === selectedType;
+    const rawStatus = instanceById.get(space.id)?.operationalStatus;
+    const statusMatch = selectedStatusFilter === 'all' || rawStatus === selectedStatusFilter;
+    return typeMatch && statusMatch;
+  });
+
   const stats = {
-    total: spaces.length,
-    available: spaces.filter((s) => s.status === 'available').length,
-    occupied: spaces.filter((s) => s.status === 'occupied').length,
-    maintenance: spaces.filter((s) => s.status === 'maintenance').length,
+    totalTemplates: templates.length,
+    totalInstances: instances.length,
+    floors: floors.length,
+    active: instances.filter((instance) => instance.operationalStatus === 'ACTIVE').length,
+    unavailable: instances.filter((instance) => instance.operationalStatus === 'UNAVAILABLE').length,
+    maintenance: instances.filter((instance) => instance.operationalStatus === 'MAINTENANCE').length,
+    broken: instances.filter((instance) => instance.operationalStatus === 'BROKEN').length,
+    inactive: instances.filter((instance) => instance.operationalStatus === 'INACTIVE').length,
+  };
+
+  const openCreateTemplate = () => {
+    setTemplateModalMode('create');
+    setSelectedTemplate(null);
+    setTemplateForm(emptyTemplateForm());
+    setShowTemplateModal(true);
+  };
+
+  const openEditTemplate = (template: WorkspaceTemplate) => {
+    setTemplateModalMode('edit');
+    setSelectedTemplate(template);
+    setTemplateForm(buildTemplateForm(template));
+    setShowTemplateModal(true);
+  };
+
+  const openCreateInstance = (templateId?: string) => {
+    setInstanceForm({
+      ...emptyInstanceForm(templates, floors),
+      templateId: templateId ?? templates[0]?.id ?? '',
+    });
+    setShowInstanceModal(true);
+  };
+
+  const handleTemplateSubmit = async () => {
+    if (!templateForm.name.trim()) {
+      alert('Please enter a template name');
+      return;
+    }
+
+    try {
+      if (templateModalMode === 'create') {
+        await createAdminWorkspaceTemplate(toTemplatePayload(templateForm));
+        alert(`Template "${templateForm.name}" created successfully!`);
+      } else if (selectedTemplate) {
+        await updateAdminWorkspaceTemplate(selectedTemplate.id, toTemplateUpdatePayload(templateForm));
+        alert(`Template "${templateForm.name}" updated successfully!`);
+      }
+
+      setShowTemplateModal(false);
+      setSelectedTemplate(null);
+      await loadCatalog();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Template save failed');
+    }
+  };
+
+  const handleInstanceSubmit = async () => {
+    if (!instanceForm.templateId || !instanceForm.floorId) {
+      alert('Please choose a template and floor');
+      return;
+    }
+
+    if (!instanceForm.instanceCode.trim() || !instanceForm.displayName.trim()) {
+      alert('Please enter an instance code and display name');
+      return;
+    }
+
+    try {
+      await createAdminWorkspaceInstance({
+        templateId: instanceForm.templateId,
+        floorId: instanceForm.floorId,
+        instanceCode: instanceForm.instanceCode,
+        displayName: instanceForm.displayName,
+        operationalStatus: instanceForm.operationalStatus,
+      } satisfies CreateWorkspaceInstanceInput);
+
+      alert(`Workspace instance "${instanceForm.displayName}" created successfully!`);
+      setShowInstanceModal(false);
+      await loadCatalog();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Workspace instance creation failed');
+    }
   };
 
   const handleEditClick = (space: Space) => {
+    const rawInstance = instanceById.get(space.id);
     setSelectedSpace(space);
-    setEditForm({
-      name: space.name,
-      zone: space.zone,
-      hourlyRate: space.hourlyRate,
-      dayRate: space.dayRate,
-      capacity: space.capacity || 0,
-      status: space.status,
-      recommendations: space.recommendations || [],
-    });
+    setEditForm(buildInstanceEditForm(space, rawInstance));
     setShowEditModal(true);
+  };
+
+  const appendImpactQueue = (space: Space, result: WorkspaceManagedUpdateResult) => {
+    if (result.affectedFutureReservations.length === 0) return;
+
+    setStatusQueue((current) => [
+      {
+        instanceId: result.instance.id,
+        instanceCode: result.instance.instanceCode,
+        workspaceName: result.instance.displayName || space.name,
+        floorName: result.instance.floor.name,
+        newOperationalStatus: result.instance.operationalStatus,
+        reservations: result.affectedFutureReservations,
+      },
+      ...current.filter((entry) => entry.instanceId !== result.instance.id),
+    ]);
   };
 
   const handleSaveEdit = async () => {
@@ -198,30 +427,39 @@ export function WorkspaceManagement() {
     }
 
     try {
-      const updatedSpace = selectedSpace.templateId
-        ? toSpace(await updateAdminWorkspaceSpace(selectedSpace as RequiredBackendSpace, {
-            name: editForm.name,
-            hourlyRate: editForm.hourlyRate,
-            capacity: editForm.capacity,
-            status: editForm.status,
-            recommendations: editForm.recommendations,
-          }))
-        : {
-            ...selectedSpace,
-            name: editForm.name,
-            zone: editForm.zone,
-            hourlyRate: editForm.hourlyRate,
-            dayRate: editForm.dayRate,
-            capacity: editForm.capacity > 0 ? editForm.capacity : undefined,
-            status: editForm.status,
-            recommendations: editForm.recommendations,
-          };
+      const result = await updateAdminWorkspaceSpace(selectedSpace, {
+        name: editForm.name,
+        hourlyRate: editForm.hourlyRate,
+        capacity: editForm.capacity,
+        operationalStatus: editForm.operationalStatus,
+        recommendations: editForm.recommendations,
+      });
 
-      setSpaces(spaces.map(space =>
-        space.id === selectedSpace.id ? updatedSpace : space
-      ));
+      setSpaces((current) =>
+        current.map((space) => (space.id === selectedSpace.id ? result.adminSpace : space))
+      );
+      setInstances((current) =>
+        current.map((instance) => (instance.id === result.instance.id ? result.instance : instance))
+      );
+      setTemplates((current) =>
+        current.map((template) =>
+          template.id === selectedSpace.templateId
+            ? {
+                ...template,
+                rateAmount: editForm.hourlyRate,
+                capacity: editForm.capacity,
+                defaultStyle: { ...template.defaultStyle, recommendations: editForm.recommendations },
+              }
+            : template
+        )
+      );
+      appendImpactQueue(selectedSpace, result);
 
-      alert(`Workspace "${editForm.name}" updated successfully!`);
+      alert(
+        result.affectedFutureReservations.length > 0
+          ? `Workspace updated. ${result.affectedFutureReservations.length} future confirmed reservation(s) need follow-up.`
+          : `Workspace "${editForm.name}" updated successfully!`
+      );
       setShowEditModal(false);
       setSelectedSpace(null);
     } catch (error) {
@@ -238,11 +476,14 @@ export function WorkspaceManagement() {
     if (!selectedSpace) return;
 
     try {
-      if (selectedSpace.templateId) {
-        await deactivateAdminWorkspaceSpace(selectedSpace.id);
-      }
-      setSpaces(spaces.filter(space => space.id !== selectedSpace.id));
-      alert(`Workspace "${selectedSpace.name}" has been deleted successfully`);
+      await deactivateAdminWorkspaceSpace(selectedSpace.id);
+      setSpaces((current) => current.filter((space) => space.id !== selectedSpace.id));
+      setInstances((current) =>
+        current.map((instance) =>
+          instance.id === selectedSpace.id ? { ...instance, operationalStatus: 'INACTIVE' } : instance
+        )
+      );
+      alert(`Workspace "${selectedSpace.name}" has been deactivated successfully`);
       setShowDeleteConfirm(false);
       setSelectedSpace(null);
     } catch (error) {
@@ -251,230 +492,620 @@ export function WorkspaceManagement() {
   };
 
   const handleDuplicateClick = async (space: Space) => {
-    const duplicateNumber = spaces.filter(s => s.name.startsWith(space.name)).length + 1;
-    const draftName = `${space.name} (Copy ${duplicateNumber})`;
-    const draftCode = `${space.instanceCode ?? space.id}-COPY-${Date.now().toString().slice(-6)}`;
+    const duplicateNumber = spaces.filter((s) => s.templateId === space.templateId).length + 1;
+    const draftName = `${space.name} Copy ${duplicateNumber}`;
+    const draftCode = `${space.instanceCode}-COPY-${duplicateNumber}`;
 
     try {
-      const newSpace: Space = space.templateId
-        ? toSpace(await duplicateAdminWorkspaceSpace(space as RequiredBackendSpace, {
-            instanceCode: draftCode,
-            displayName: draftName,
-          }))
-        : {
-            ...space,
-            id: `${space.id}-copy-${Date.now()}`,
-            name: draftName,
-          };
-
-      setSpaces([...spaces, newSpace]);
-
-      // Immediately open edit modal for the duplicated space
-      setSelectedSpace(newSpace);
-      setEditForm({
-        name: newSpace.name,
-        zone: newSpace.zone,
-        hourlyRate: newSpace.hourlyRate,
-        dayRate: newSpace.dayRate,
-        capacity: newSpace.capacity || 0,
-        status: newSpace.status,
-        recommendations: newSpace.recommendations || [],
+      const newSpace = await duplicateAdminWorkspaceSpace(space, {
+        instanceCode: draftCode,
+        displayName: draftName,
       });
+
+      setSpaces((current) => [...current, newSpace]);
+      await loadCatalog();
+      setSelectedSpace(newSpace);
+      setEditForm(buildInstanceEditForm(newSpace, instanceById.get(newSpace.id)));
       setShowEditModal(true);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Workspace duplicate failed');
     }
   };
 
-  const toggleRecommendation = (tag: RecommendationTag) => {
-    setEditForm(prev => ({
-      ...prev,
-      recommendations: prev.recommendations.includes(tag)
-        ? prev.recommendations.filter(t => t !== tag)
-        : [...prev.recommendations, tag],
+  const dismissImpactEntry = (instanceId: string) => {
+    setStatusQueue((current) => current.filter((entry) => entry.instanceId !== instanceId));
+  };
+
+  const toggleTemplateRecommendation = (tag: RecommendationTag) => {
+    setTemplateForm((current) => ({
+      ...current,
+      recommendations: current.recommendations.includes(tag)
+        ? current.recommendations.filter((item) => item !== tag)
+        : [...current.recommendations, tag],
+    }));
+  };
+
+  const toggleInstanceRecommendation = (tag: RecommendationTag) => {
+    setEditForm((current) => ({
+      ...current,
+      recommendations: current.recommendations.includes(tag)
+        ? current.recommendations.filter((item) => item !== tag)
+        : [...current.recommendations, tag],
     }));
   };
 
   return (
     <div className="space-y-6">
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-          <Layers className="w-8 h-8 text-[#009689] mb-2" />
-          <p className="text-sm text-gray-600 mb-1">Total Spaces</p>
-          <p className="text-3xl font-bold text-gray-900">{stats.total}</p>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-          <DoorOpen className="w-8 h-8 text-green-600 mb-2" />
-          <p className="text-sm text-gray-600 mb-1">Available</p>
-          <p className="text-3xl font-bold text-gray-900">{stats.available}</p>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-          <MapPin className="w-8 h-8 text-red-600 mb-2" />
-          <p className="text-sm text-gray-600 mb-1">Occupied</p>
-          <p className="text-3xl font-bold text-gray-900">{stats.occupied}</p>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-          <Edit className="w-8 h-8 text-yellow-600 mb-2" />
-          <p className="text-sm text-gray-600 mb-1">Maintenance</p>
-          <p className="text-3xl font-bold text-gray-900">{stats.maintenance}</p>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        <StatCard icon={<Layers className="w-8 h-8 text-[#009689]" />} label="Templates" value={stats.totalTemplates} />
+        <StatCard icon={<MapPin className="w-8 h-8 text-blue-600" />} label="Instances" value={stats.totalInstances} />
+        <StatCard icon={<Building2 className="w-8 h-8 text-purple-600" />} label="Floors" value={stats.floors} />
+        <StatCard icon={<AlertCircle className="w-8 h-8 text-orange-600" />} label="Follow-up Queue" value={statusQueue.length} />
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-        <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={() => setSelectedType('all')}
-            className={`px-4 py-2 rounded-lg transition-all text-sm font-medium ${
-              selectedType === 'all'
-                ? 'bg-[#009689] text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            All Spaces
-          </button>
-          <button
-            onClick={() => setSelectedType('desk')}
-            className={`px-4 py-2 rounded-lg transition-all text-sm font-medium ${
-              selectedType === 'desk'
-                ? 'bg-[#009689] text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            Desks
-          </button>
-          <button
-            onClick={() => setSelectedType('meeting-room')}
-            className={`px-4 py-2 rounded-lg transition-all text-sm font-medium ${
-              selectedType === 'meeting-room'
-                ? 'bg-[#009689] text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            Meeting Rooms
-          </button>
-          <button
-            onClick={() => setSelectedType('phone-booth')}
-            className={`px-4 py-2 rounded-lg transition-all text-sm font-medium ${
-              selectedType === 'phone-booth'
-                ? 'bg-[#009689] text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            Phone Booths
-          </button>
-        </div>
-      </div>
-
-      {/* Spaces Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredSpaces.map((space, index) => (
-          <div
-            key={`space-${index}-${space.id}`}
-            className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-all"
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-start gap-3">
-                <div className={`p-3 rounded-lg bg-gradient-to-br ${typeColors[space.type]} shadow-sm`}>
-                  <MapPin className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-gray-900 font-semibold text-lg mb-1">{space.name}</h3>
-                  <p className="text-sm text-gray-600">{space.zone}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 mb-4">
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${statusConfig[space.status].color}`}>
-                <div className={`w-2 h-2 rounded-full ${statusConfig[space.status].dot}`} />
-                <span className="text-sm font-medium capitalize">{space.status}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2 mb-4 p-3 rounded-lg bg-gray-50">
-              {space.capacity && (
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Capacity:</span>
-                  <span className="text-gray-900 font-medium">{space.capacity} people</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">Hourly Rate:</span>
-                <span className="text-green-600 font-semibold">${space.hourlyRate}/hr</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">Day Rate:</span>
-                <span className="text-green-600 font-semibold">${space.dayRate}/day</span>
-              </div>
-            </div>
-
-            {space.recommendations && space.recommendations.length > 0 && (
-              <div className="mb-4">
-                <p className="text-xs text-gray-500 mb-2">Recommendations:</p>
-                <div className="flex flex-wrap gap-1">
-                  {space.recommendations.map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-md border border-blue-200"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                onClick={() => handleEditClick(space)}
-                className="flex items-center justify-center gap-1 px-2 py-2 bg-[#e6f7f5] text-[#009689] rounded-lg hover:bg-[#ccefeb] transition-colors text-sm"
-              >
-                <Edit className="w-4 h-4" />
-                <span className="hidden sm:inline">Edit</span>
-              </button>
-              <button
-                onClick={() => handleDuplicateClick(space)}
-                className="flex items-center justify-center gap-1 px-2 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors text-sm"
-              >
-                <Copy className="w-4 h-4" />
-                <span className="hidden sm:inline">Copy</span>
-              </button>
-              <button
-                onClick={() => handleDeleteClick(space)}
-                className="flex items-center justify-center gap-1 px-2 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span className="hidden sm:inline">Delete</span>
-              </button>
-            </div>
-          </div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {operationalStatusOptions.map((status) => (
+          <StatCard
+            key={status}
+            icon={statusConfig[status].summaryIcon}
+            label={statusConfig[status].label}
+            value={stats[status.toLowerCase() as keyof typeof stats] as number}
+          />
         ))}
       </div>
 
-      {/* Edit Modal */}
-      {showEditModal && selectedSpace && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 my-8">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-semibold text-gray-900">Edit Workspace</h3>
-              <button
-                onClick={() => {
-                  setShowEditModal(false);
-                  setSelectedSpace(null);
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Workspace Catalog</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Manage shared template fields separately from physical instance details and track blocking status changes.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={openCreateTemplate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#009689] text-white rounded-lg hover:opacity-90 transition-opacity"
+            >
+              <Plus className="w-4 h-4" />
+              Create Template
+            </button>
+            <button
+              onClick={() => openCreateInstance()}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Create Instance
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {statusQueue.length > 0 && (
+        <section className="bg-white rounded-lg border border-orange-200 p-6 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-xl font-semibold text-gray-900">Affected Future Confirmed Reservations</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              These bookings were detected by the backend after a workspace became newly blocking. No reassignment was performed automatically.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {statusQueue.map((entry) => (
+              <div key={entry.instanceId} className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-orange-950">
+                      {entry.workspaceName} ({entry.instanceCode})
+                    </p>
+                    <p className="text-sm text-orange-800 mt-1">
+                      New status: {statusConfig[entry.newOperationalStatus].label} • Floor: {entry.floorName}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => dismissImpactEntry(entry.instanceId)}
+                    className="px-3 py-1.5 rounded-lg bg-white text-orange-700 border border-orange-200 hover:bg-orange-100 transition-colors text-sm font-medium"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {entry.reservations.map((reservation) => (
+                    <div key={reservation.candidateId} className="rounded-lg bg-white border border-orange-100 p-3">
+                      <p className="text-sm font-medium text-gray-900">{reservation.reservationReferenceCode}</p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {formatDateTime(reservation.startAt)} to {formatDateTime(reservation.endAt)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+        <div className="flex gap-2 flex-wrap">
+          {[
+            ['all', 'All Instances'],
+            ['desk', 'Desks'],
+            ['meeting-room', 'Meeting Rooms'],
+            ['phone-booth', 'Phone Booths'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setSelectedType(value)}
+              className={`px-4 py-2 rounded-lg transition-all text-sm font-medium ${
+                selectedType === value
+                  ? 'bg-[#009689] text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 flex-wrap mt-3">
+          <button
+            onClick={() => setSelectedStatusFilter('all')}
+            className={`px-3 py-1.5 rounded-lg transition-all text-sm font-medium ${
+              selectedStatusFilter === 'all' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            All Statuses
+          </button>
+          {operationalStatusOptions.map((status) => (
+            <button
+              key={status}
+              onClick={() => setSelectedStatusFilter(status)}
+              className={`px-3 py-1.5 rounded-lg transition-all text-sm font-medium border ${
+                selectedStatusFilter === status
+                  ? `${statusConfig[status].color}`
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {statusConfig[status].label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-semibold text-gray-900">Templates</h3>
+            <p className="text-sm text-gray-600">Shared rate, capacity, shape, photo, and activity settings.</p>
+          </div>
+        </div>
+
+        {loading ? (
+          <EmptyState title="Loading templates..." subtitle="Fetching workspace templates from the backend." />
+        ) : templates.length === 0 ? (
+          <EmptyState title="No templates yet" subtitle="Create the first reusable workspace template to begin." />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {templates.map((template) => {
+              const templateType = inferTemplateType(template);
+              const instanceCount = instances.filter((instance) => instance.templateId === template.id).length;
+              const recommendations = extractRecommendationTags(template.defaultStyle);
+
+              return (
+                <div key={template.id} className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-all">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div className="flex items-start gap-3">
+                      <div className={`p-3 rounded-lg bg-gradient-to-br ${typeColors[templateType]} shadow-sm`}>
+                        <Tag className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="text-gray-900 font-semibold text-lg">{template.name}</h4>
+                        <p className="text-sm text-gray-600">
+                          {instanceCount} instance{instanceCount === 1 ? '' : 's'} linked
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-3 py-1.5 rounded-lg border text-sm font-medium ${
+                        template.isActive
+                          ? 'bg-green-100 text-green-700 border-green-200'
+                          : 'bg-gray-100 text-gray-700 border-gray-200'
+                      }`}
+                    >
+                      {template.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 mb-4 p-3 rounded-lg bg-gray-50">
+                    <InfoRow label="Description" value={template.description || 'No description'} />
+                    <InfoRow label="Photo Path" value={template.photoPath || 'No photo path'} />
+                    <InfoRow label="Capacity" value={`${template.capacity} people`} />
+                    <InfoRow label="Hourly Rate" value={`$${template.rateAmount}/hr`} />
+                    <InfoRow label="Day Rate" value={`$${template.rateAmount * 8}/day`} />
+                    <InfoRow label="Default Shape" value={template.defaultShape} />
+                    <InfoRow label="Default Color" value={template.defaultColor} />
+                  </div>
+
+                  {recommendations.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs text-gray-500 mb-2">Recommendation Tags</p>
+                      <div className="flex flex-wrap gap-1">
+                        {recommendations.map((tag) => (
+                          <span key={tag} className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-md border border-blue-200">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => openEditTemplate(template)}
+                      className="flex items-center justify-center gap-1 px-2 py-2 bg-[#e6f7f5] text-[#009689] rounded-lg hover:bg-[#ccefeb] transition-colors text-sm"
+                    >
+                      <Edit className="w-4 h-4" />
+                      Edit Template
+                    </button>
+                    <button
+                      onClick={() => openCreateInstance(template.id)}
+                      className="flex items-center justify-center gap-1 px-2 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-sm"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Instance
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h3 className="text-xl font-semibold text-gray-900">Physical Workspace Instances</h3>
+          <p className="text-sm text-gray-600">Each instance now exposes the full operational status model.</p>
+        </div>
+
+        {loading ? (
+          <EmptyState title="Loading instances..." subtitle="Fetching workspace instances from the backend." />
+        ) : filteredSpaces.length === 0 ? (
+          <EmptyState title="No instances found" subtitle="Adjust the filters or create a new workspace instance." />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredSpaces.map((space) => {
+              const instance = instanceById.get(space.id);
+              const operationalStatus = instance?.operationalStatus ?? 'ACTIVE';
+              const floorName = instance?.floor.name ?? findFloorName(floors, space.floorId);
+
+              return (
+                <div key={space.id} className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-all">
+                  <div className="flex items-start justify-between mb-4 gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className={`p-3 rounded-lg bg-gradient-to-br ${typeColors[space.type]} shadow-sm`}>
+                        <MapPin className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h4 className="text-gray-900 font-semibold text-lg mb-1">{space.name}</h4>
+                        <p className="text-sm text-gray-600">
+                          {findTemplateName(templates, space.templateId)} • {floorName}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${statusConfig[operationalStatus].color}`}>
+                      <div className={`w-2 h-2 rounded-full ${statusConfig[operationalStatus].dot}`} />
+                      <span className="text-sm font-medium">{statusConfig[operationalStatus].label}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mb-4 p-3 rounded-lg bg-gray-50">
+                    <InfoRow label="Instance Code" value={space.instanceCode} />
+                    <InfoRow label="Floor" value={floorName} />
+                    <InfoRow label="Capacity" value={`${space.capacity ?? 1} people`} />
+                    <InfoRow label="Hourly Rate" value={`$${space.hourlyRate}/hr`} />
+                    <InfoRow label="Day Rate" value={`$${space.dayRate}/day`} />
+                    <InfoRow label="Operational Status" value={statusConfig[operationalStatus].label} />
+                  </div>
+
+                  {space.recommendations && space.recommendations.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs text-gray-500 mb-2">Template Tags</p>
+                      <div className="flex flex-wrap gap-1">
+                        {space.recommendations.map((tag) => (
+                          <span key={tag} className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-md border border-blue-200">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => handleEditClick(space)}
+                      className="flex items-center justify-center gap-1 px-2 py-2 bg-[#e6f7f5] text-[#009689] rounded-lg hover:bg-[#ccefeb] transition-colors text-sm"
+                    >
+                      <Edit className="w-4 h-4" />
+                      <span className="hidden sm:inline">Edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleDuplicateClick(space)}
+                      className="flex items-center justify-center gap-1 px-2 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors text-sm"
+                    >
+                      <Copy className="w-4 h-4" />
+                      <span className="hidden sm:inline">Copy</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClick(space)}
+                      className="flex items-center justify-center gap-1 px-2 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors text-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Deactivate</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {showTemplateModal && (
+        <ModalFrame
+          title={templateModalMode === 'create' ? 'Create Template' : 'Edit Template'}
+          onClose={() => {
+            setShowTemplateModal(false);
+            setSelectedTemplate(null);
+          }}
+          size="xl"
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Template Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={templateForm.name}
+                onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })}
+                placeholder="e.g., Skypod Table"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+              />
             </div>
 
-            <div className="space-y-4">
-              {/* Workspace Name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+              <textarea
+                value={templateForm.description}
+                onChange={(event) => setTemplateForm({ ...templateForm, description: event.target.value })}
+                rows={3}
+                placeholder="Shared template description"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Photo Path</label>
+              <input
+                type="text"
+                value={templateForm.photoPath}
+                onChange={(event) => setTemplateForm({ ...templateForm, photoPath: event.target.value })}
+                placeholder="/storage/workspace-photos/skypod-table.jpg"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <NumberField label="Capacity" value={templateForm.capacity} onChange={(value) => setTemplateForm({ ...templateForm, capacity: value })} min={1} />
+              <NumberField
+                label="Hourly Rate ($)"
+                value={templateForm.rateAmount}
+                onChange={(value) => setTemplateForm({ ...templateForm, rateAmount: value })}
+                min={0}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Default Shape</label>
+                <select
+                  value={templateForm.defaultShape}
+                  onChange={(event) => setTemplateForm({ ...templateForm, defaultShape: event.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                >
+                  {availableShapes.map((shape) => (
+                    <option key={shape.value} value={shape.value}>
+                      {shape.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Default Color</label>
+                <div className="flex gap-3">
+                  <input
+                    type="color"
+                    value={templateForm.defaultColor}
+                    onChange={(event) => setTemplateForm({ ...templateForm, defaultColor: event.target.value })}
+                    className="h-11 w-16 border border-gray-300 rounded-lg bg-white"
+                  />
+                  <input
+                    type="text"
+                    value={templateForm.defaultColor}
+                    onChange={(event) => setTemplateForm({ ...templateForm, defaultColor: event.target.value })}
+                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <input
+                id="template-active"
+                type="checkbox"
+                checked={templateForm.isActive}
+                onChange={(event) => setTemplateForm({ ...templateForm, isActive: event.target.checked })}
+                className="h-4 w-4"
+              />
+              <label htmlFor="template-active" className="text-sm font-medium text-gray-700">
+                Template is active and available for new instances
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Recommendation Tags</label>
+              <div className="grid grid-cols-2 gap-2">
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTemplateRecommendation(tag)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      templateForm.recommendations.includes(tag)
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <ModalActions
+            onCancel={() => {
+              setShowTemplateModal(false);
+              setSelectedTemplate(null);
+            }}
+            onConfirm={() => void handleTemplateSubmit()}
+            confirmLabel={templateModalMode === 'create' ? 'Create Template' : 'Save Template'}
+          />
+        </ModalFrame>
+      )}
+
+      {showInstanceModal && (
+        <ModalFrame title="Create Workspace Instance" onClose={() => setShowInstanceModal(false)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Template <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={instanceForm.templateId}
+                  onChange={(event) => setInstanceForm({ ...instanceForm, templateId: event.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                >
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Floor <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={instanceForm.floorId}
+                  onChange={(event) => setInstanceForm({ ...instanceForm, floorId: event.target.value })}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                >
+                  {floors.map((floor) => (
+                    <option key={floor.id} value={floor.id}>
+                      {floor.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Instance Code <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={instanceForm.instanceCode}
+                  onChange={(event) => setInstanceForm({ ...instanceForm, instanceCode: event.target.value.toUpperCase() })}
+                  placeholder="SP-01"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Display Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={instanceForm.displayName}
+                  onChange={(event) => setInstanceForm({ ...instanceForm, displayName: event.target.value })}
+                  placeholder="Skypod Table 01"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Initial Status</label>
+              <select
+                value={instanceForm.operationalStatus}
+                onChange={(event) =>
+                  setInstanceForm({
+                    ...instanceForm,
+                    operationalStatus: event.target.value as WorkspaceOperationalStatus,
+                  })
+                }
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+              >
+                {operationalStatusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {statusConfig[status].label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <ModalActions
+            onCancel={() => setShowInstanceModal(false)}
+            onConfirm={() => void handleInstanceSubmit()}
+            confirmLabel="Create Instance"
+          />
+        </ModalFrame>
+      )}
+
+      {showEditModal && selectedSpace && (
+        <ModalFrame
+          title="Edit Workspace Instance"
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedSpace(null);
+          }}
+          size="xl"
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-600 mb-1">Template</p>
+                <p className="text-gray-900 font-medium">{findTemplateName(templates, selectedSpace.templateId)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-600 mb-1">Floor</p>
+                <p className="text-gray-900 font-medium">{findFloorName(floors, selectedSpace.floorId)}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Workspace Name <span className="text-red-500">*</span>
@@ -482,195 +1113,259 @@ export function WorkspaceManagement() {
                 <input
                   type="text"
                   value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  placeholder="e.g., Desk A1, Meeting Room 1"
+                  onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
                 />
               </div>
 
-              {/* Zone */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Zone
-                </label>
-                <select
-                  value={editForm.zone}
-                  onChange={(e) => setEditForm({ ...editForm, zone: e.target.value })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
-                >
-                  {availableZones.map((zone) => (
-                    <option key={zone} value={zone}>{zone}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Rates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Hourly Rate ($)
-                  </label>
-                  <input
-                    type="number"
-                    value={editForm.hourlyRate}
-                    onChange={(e) => setEditForm({ ...editForm, hourlyRate: parseFloat(e.target.value) || 0 })}
-                    placeholder="5.00"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Day Rate ($)
-                  </label>
-                  <input
-                    type="number"
-                    value={editForm.dayRate}
-                    onChange={(e) => setEditForm({ ...editForm, dayRate: parseFloat(e.target.value) || 0 })}
-                    placeholder="40.00"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
-                  />
-                </div>
-              </div>
-
-              {/* Capacity (for meeting rooms) */}
-              {selectedSpace.type === 'meeting-room' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Capacity (people)
-                  </label>
-                  <input
-                    type="number"
-                    value={editForm.capacity}
-                    onChange={(e) => setEditForm({ ...editForm, capacity: parseInt(e.target.value) || 0 })}
-                    placeholder="6"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
-                  />
-                </div>
-              )}
-
-              {/* Status */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Status
-                </label>
-                <select
-                  value={editForm.status}
-                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value as Space['status'] })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
-                >
-                  <option value="available">Available</option>
-                  <option value="occupied">Occupied</option>
-                  <option value="maintenance">Maintenance</option>
-                </select>
-              </div>
-
-              {/* Recommendations */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Recommendation Tags
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {availableTags.map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => toggleRecommendation(tag)}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        editForm.recommendations.includes(tag)
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Select tags to help users find the perfect workspace
-                </p>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Instance Code</label>
+                <input
+                  type="text"
+                  value={editForm.instanceCode}
+                  readOnly
+                  className="w-full px-4 py-2.5 border border-gray-200 bg-gray-50 rounded-lg text-gray-600"
+                />
               </div>
             </div>
 
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowEditModal(false);
-                  setSelectedSpace(null);
-                }}
-                className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <NumberField
+                label="Hourly Rate ($)"
+                value={editForm.hourlyRate}
+                onChange={(value) => setEditForm({ ...editForm, hourlyRate: value, dayRate: value * 8 })}
+                min={0}
+              />
+              <NumberField
+                label="Day Rate ($)"
+                value={editForm.dayRate}
+                onChange={(value) => setEditForm({ ...editForm, dayRate: value })}
+                min={0}
+              />
+            </div>
+
+            <NumberField
+              label="Capacity"
+              value={editForm.capacity}
+              onChange={(value) => setEditForm({ ...editForm, capacity: value })}
+              min={1}
+            />
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Operational Status</label>
+              <select
+                value={editForm.operationalStatus}
+                onChange={(event) =>
+                  setEditForm({ ...editForm, operationalStatus: event.target.value as WorkspaceOperationalStatus })
+                }
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                className="flex-1 px-4 py-2.5 bg-[#009689] text-white rounded-lg hover:opacity-90 transition-opacity font-medium"
-              >
-                Save Changes
-              </button>
+                {operationalStatusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {statusConfig[status].label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Template Recommendation Tags</label>
+              <div className="grid grid-cols-2 gap-2">
+                {availableTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => toggleInstanceRecommendation(tag)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      editForm.recommendations.includes(tag)
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Tags remain template-scoped. Status changes affect only this physical instance.
+              </p>
             </div>
           </div>
-        </div>
+
+          <ModalActions
+            onCancel={() => {
+              setShowEditModal(false);
+              setSelectedSpace(null);
+            }}
+            onConfirm={() => void handleSaveEdit()}
+            confirmLabel="Save Changes"
+          />
+        </ModalFrame>
       )}
 
-      {/* Delete Confirmation Modal */}
       {showDeleteConfirm && selectedSpace && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-gray-900">Delete Workspace</h3>
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setSelectedSpace(null);
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
+        <ModalFrame
+          title="Deactivate Workspace"
+          onClose={() => {
+            setShowDeleteConfirm(false);
+            setSelectedSpace(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+              <p className="text-sm text-red-800">
+                Are you sure you want to set this workspace to Inactive? Historical records stay intact and the workspace stops being bookable.
+              </p>
             </div>
 
-            <div className="space-y-4">
-              <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-                <p className="text-sm text-red-800">
-                  Are you sure you want to delete this workspace? This action cannot be undone and will remove it from the workspace map.
-                </p>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Workspace Name</p>
-                <p className="text-gray-900 font-medium">{selectedSpace.name}</p>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Zone</p>
-                <p className="text-gray-900 font-medium">{selectedSpace.zone}</p>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">Type</p>
-                <p className="text-gray-900 font-medium capitalize">{selectedSpace.type.replace('-', ' ')}</p>
-              </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-sm text-gray-600 mb-1">Workspace Name</p>
+              <p className="text-gray-900 font-medium">{selectedSpace.name}</p>
             </div>
 
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setSelectedSpace(null);
-                }}
-                className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
-              >
-                Delete Workspace
-              </button>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-sm text-gray-600 mb-1">Instance Code</p>
+              <p className="text-gray-900 font-medium">{selectedSpace.instanceCode}</p>
             </div>
           </div>
-        </div>
+
+          <ModalActions
+            onCancel={() => {
+              setShowDeleteConfirm(false);
+              setSelectedSpace(null);
+            }}
+            onConfirm={() => void handleConfirmDelete()}
+            confirmLabel="Set Inactive"
+            confirmClassName="bg-red-600 hover:bg-red-700"
+          />
+        </ModalFrame>
       )}
     </div>
   );
+}
+
+function ModalFrame({
+  title,
+  onClose,
+  children,
+  size = 'lg',
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  size?: 'lg' | 'xl';
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className={`bg-white rounded-xl shadow-xl w-full my-8 ${size === 'xl' ? 'max-w-3xl' : 'max-w-2xl'} p-6`}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-semibold text-gray-900">{title}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ModalActions({
+  onCancel,
+  onConfirm,
+  confirmLabel,
+  confirmClassName = 'bg-[#009689] hover:opacity-90',
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  confirmLabel: string;
+  confirmClassName?: string;
+}) {
+  return (
+    <div className="flex gap-3 mt-6">
+      <button
+        onClick={onCancel}
+        className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+      >
+        Cancel
+      </button>
+      <button
+        onClick={onConfirm}
+        className={`flex-1 px-4 py-2.5 text-white rounded-lg transition-colors font-medium ${confirmClassName}`}
+      >
+        {confirmLabel}
+      </button>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+      {icon}
+      <p className="text-sm text-gray-600 mb-1">{label}</p>
+      <p className="text-3xl font-bold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between text-sm gap-4">
+      <span className="text-gray-600">{label}:</span>
+      <span className="text-gray-900 font-medium text-right">{value}</span>
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  min,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+      <input
+        type="number"
+        value={value}
+        min={min}
+        onChange={(event) => onChange(Number(event.target.value) || 0)}
+        className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:border-[#009689] focus:ring-2 focus:ring-[#e6f7f5] transition-all"
+      />
+    </div>
+  );
+}
+
+function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-10 text-center">
+      <p className="text-lg font-semibold text-gray-900">{title}</p>
+      <p className="text-sm text-gray-600 mt-2">{subtitle}</p>
+    </div>
+  );
+}
+
+function findTemplateName(templates: WorkspaceTemplate[], templateId: string): string {
+  return templates.find((template) => template.id === templateId)?.name ?? 'Unknown Template';
+}
+
+function findFloorName(floors: Floor[], floorId: string): string {
+  return floors.find((floor) => floor.id === floorId)?.name ?? 'Unknown Floor';
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }

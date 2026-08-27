@@ -1,4 +1,11 @@
 export type { AppRole, DeskAtlasUser } from './models/user';
+export * from './models/reservation';
+export * from './models/availability';
+export {
+  CandidateValidationError,
+  validateCandidates,
+} from './services/candidateValidationService';
+export type { CandidateValidationContext } from './services/candidateValidationService';
 export { createDemoUser } from './services/userService';
 export type {
   AvailabilityRepository,
@@ -40,6 +47,8 @@ export type {
   AdminWorkspaceStatus,
   AdminWorkspaceType,
   CreateWorkspaceInstanceInput,
+  CreateWorkspaceInstanceFromTemplateInput,
+  CreateFloorInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
   Floor,
@@ -69,6 +78,7 @@ export {
   mapInstanceToAdminSpace,
   mapOperationalStatusToAdminStatus,
   normalizeCreateInstanceInput,
+  normalizeCreateInstanceFromTemplateInput,
   normalizeCreateTemplateInput,
   normalizeDuplicateInstanceInput,
   normalizeUpdateInstanceInput,
@@ -94,4 +104,27 @@ export {
   AvailabilityValidationError,
   createAvailabilityService,
 } from './services/availabilityService';
-export { SupabaseAvailabilityRepository } from './services/availabilitySupabaseRepository';
+export * from './services/availabilityMemoryRepository';
+export * from './services/availabilitySupabaseRepository';
+
+// Reservation Service
+export * from './services/reservationRepository';
+export * from './services/reservationMemoryRepository';
+export * from './services/reservationSupabaseRepository';
+export * from './services/reservationService';
+export * from './services/paymentSessionRepository';
+export * from './services/paymentSessionService';
+export * from './services/paymentReviewRepository';
+export * from './services/paymentReviewService';
+export * from './services/counterPaymentRepository';
+export * from './services/counterPaymentService';
+export * from './services/candidateValidationService';
+export * from './services/bookingAccessRepository';
+export * from './services/bookingAccessService';
+export * from './services/staffOperationsRepository';
+export * from './services/staffOperationsService';
+export * from './services/guestReservationTrackingRepository';
+export * from './services/guestReservationTrackingService';
+export * from './models/reports';
+export * from './services/reportsRepository';
+export * from './services/reportsService';

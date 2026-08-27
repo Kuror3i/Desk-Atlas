@@ -3,7 +3,9 @@ import type {
   AdminWorkspaceStatus,
   WorkspaceAuditLogEntry,
   AdminWorkspaceType,
+  CreateFloorInput,
   CreateWorkspaceInstanceInput,
+  CreateWorkspaceInstanceFromTemplateInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
   WorkspaceAvailabilityStatus,
@@ -43,6 +45,12 @@ export class WorkspaceConflictError extends Error {
     super(message);
     this.name = 'WorkspaceConflictError';
   }
+}
+
+export function normalizeCreateFloorInput(input: CreateFloorInput): CreateFloorInput {
+  return {
+    name: requireNonBlank(input.name, 'Floor name'),
+  };
 }
 
 export function normalizeCreateTemplateInput(
@@ -106,6 +114,16 @@ export function normalizeCreateInstanceInput(
     instanceCode: normalizeInstanceCode(input.instanceCode),
     displayName: requireNonBlank(input.displayName, 'Instance display name'),
     operationalStatus: normalizeOperationalStatus(input.operationalStatus ?? 'ACTIVE'),
+  };
+}
+
+export function normalizeCreateInstanceFromTemplateInput(
+  input: CreateWorkspaceInstanceFromTemplateInput
+): CreateWorkspaceInstanceFromTemplateInput {
+  return {
+    templateId: requireNonBlank(input.templateId, 'Template id'),
+    floorId: requireNonBlank(input.floorId, 'Floor id'),
+    operationalStatus: input.operationalStatus ? normalizeOperationalStatus(input.operationalStatus) : undefined,
   };
 }
 
@@ -226,6 +244,9 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
     async listAdminSpaces() {
       return mapCatalogToAdminSpaces(await repository.listCatalog());
     },
+    async createFloor(input: CreateFloorInput) {
+      return repository.createFloor(normalizeCreateFloorInput(input));
+    },
     async createTemplate(input: CreateWorkspaceTemplateInput) {
       return repository.createTemplate(normalizeCreateTemplateInput(input));
     },
@@ -234,6 +255,33 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
     },
     async createInstance(input: CreateWorkspaceInstanceInput) {
       return repository.createInstance(normalizeCreateInstanceInput(input));
+    },
+    async createInstanceFromTemplate(input: CreateWorkspaceInstanceFromTemplateInput) {
+      const normalizedInput = normalizeCreateInstanceFromTemplateInput(input);
+      const catalog = await repository.listCatalog();
+      const template = catalog.templates.find(t => t.id === normalizedInput.templateId);
+      if (!template) {
+        throw new WorkspaceConflictError(`Template not found: ${normalizedInput.templateId}`);
+      }
+
+      const baseName = deriveTemplatePlacementBaseName(template.name);
+      let highestSequence = 0;
+
+      for (const instance of catalog.instances.filter((entry) => entry.templateId === template.id)) {
+        const match = new RegExp(`^${escapeForRegExp(baseName)}\\s+(\\d+)$`, 'i').exec(instance.displayName);
+        if (!match) continue;
+        highestSequence = Math.max(highestSequence, Number.parseInt(match[1], 10));
+      }
+
+      const newName = `${baseName} ${highestSequence + 1}`;
+      
+      return repository.createInstance({
+        templateId: template.id,
+        floorId: normalizedInput.floorId,
+        instanceCode: `V-${Date.now().toString().slice(-6)}`,
+        displayName: newName,
+        operationalStatus: normalizedInput.operationalStatus ?? 'ACTIVE',
+      });
     },
     async updateInstance(id: string, input: UpdateWorkspaceInstanceInput) {
       return repository.updateInstance(requireNonBlank(id, 'Instance id'), normalizeUpdateInstanceInput(input));
@@ -377,4 +425,19 @@ function requirePlainObject(value: Record<string, unknown>): Record<string, unkn
     throw new WorkspaceValidationError('Default style must be an object');
   }
   return value;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function deriveTemplatePlacementBaseName(templateName: string): string {
+  const words = templateName.trim().split(/\s+/);
+  const trailingGenericWords = new Set(['table', 'desk', 'seat', 'spot', 'workspace']);
+
+  if (words.length > 1 && trailingGenericWords.has(words[words.length - 1].toLowerCase())) {
+    return words.slice(0, -1).join(' ');
+  }
+
+  return templateName.trim();
 }

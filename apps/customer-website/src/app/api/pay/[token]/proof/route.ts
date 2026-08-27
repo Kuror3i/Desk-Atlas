@@ -1,0 +1,99 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import {
+  createPaymentSessionService,
+  PaymentSessionError,
+  ReservationSupabaseRepository,
+} from "@deskatlas/domain";
+
+export const runtime = "nodejs";
+
+function sanitizeFilename(filename: string): string {
+  return filename.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+export async function POST(
+  request: NextRequest,
+  context: {
+    params: Promise<{
+      token: string;
+    }>;
+  }
+) {
+  let uploadedPath: string | null = null;
+
+  try {
+    const { token } = await context.params;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error("Supabase configuration is missing.");
+    }
+
+    const formData = await request.formData();
+    const paymentMethodId = String(formData.get("paymentMethodId") ?? "").trim();
+    const proofFile = formData.get("proof");
+
+    if (!paymentMethodId) {
+      return NextResponse.json({ error: "Payment method is required." }, { status: 400 });
+    }
+
+    if (!(proofFile instanceof File)) {
+      return NextResponse.json({ error: "Payment proof file is required." }, { status: 400 });
+    }
+
+    if (proofFile.size === 0) {
+      return NextResponse.json({ error: "Payment proof file is empty." }, { status: 400 });
+    }
+
+    const repository = new ReservationSupabaseRepository({ supabaseUrl, serviceRoleKey: supabaseKey });
+    const service = createPaymentSessionService(repository);
+    const session = await service.getPaymentSession(token);
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const bucketName = process.env.PRIVATE_PAYMENT_PROOF_BUCKET ?? "payment-proofs";
+    const fileExt = proofFile.name.includes(".") ? proofFile.name.split(".").pop() : "bin";
+    const fileName = `${Date.now()}-${sanitizeFilename(session.reservationReferenceCode)}.${fileExt}`;
+    uploadedPath = `${session.reservationId}/${fileName}`;
+
+    const uploadResult = await supabase.storage
+      .from(bucketName)
+      .upload(uploadedPath, proofFile, {
+        contentType: proofFile.type || "application/octet-stream",
+        upsert: false,
+      });
+
+    if (uploadResult.error) {
+      throw new Error(uploadResult.error.message);
+    }
+
+    const submission = await service.submitPaymentProof({
+      token,
+      paymentMethodId,
+      proofStoragePath: uploadedPath,
+    });
+
+    return NextResponse.json(submission, { status: 201 });
+  } catch (error) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const bucketName = process.env.PRIVATE_PAYMENT_PROOF_BUCKET ?? "payment-proofs";
+
+    if (uploadedPath && supabaseUrl && supabaseKey) {
+      const cleanupClient = createClient(supabaseUrl, supabaseKey);
+      await cleanupClient.storage.from(bucketName).remove([uploadedPath]);
+    }
+
+    if (error instanceof PaymentSessionError) {
+      const status = error.message.includes("Invalid payment token")
+        ? 404
+        : error.message.includes("expired")
+          ? 409
+          : 409;
+      return NextResponse.json({ error: error.message }, { status });
+    }
+
+    const message = error instanceof Error ? error.message : "Unable to submit payment proof";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

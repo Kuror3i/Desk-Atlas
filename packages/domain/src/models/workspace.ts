@@ -86,6 +86,12 @@ export interface CreateWorkspaceInstanceInput {
   operationalStatus?: WorkspaceOperationalStatus;
 }
 
+export interface CreateWorkspaceInstanceFromTemplateInput {
+  templateId: string;
+  floorId: string;
+  operationalStatus?: WorkspaceOperationalStatus;
+}
+
 export interface UpdateWorkspaceInstanceInput {
   displayName?: string;
   operationalStatus?: WorkspaceOperationalStatus;
@@ -135,6 +141,10 @@ export interface DuplicateWorkspaceInstanceInput {
   displayName: string;
 }
 
+export interface CreateFloorInput {
+  name: string;
+}
+
 export type AdminWorkspaceType = 'desk' | 'meeting-room' | 'phone-booth';
 export type AdminWorkspaceStatus = 'available' | 'occupied' | 'maintenance';
 
@@ -156,6 +166,7 @@ export interface AdminWorkspaceSpace {
 export interface WorkspaceRepository {
   listCatalog(): Promise<WorkspaceCatalog>;
   getInstance(id: string): Promise<WorkspaceInstanceDetails>;
+  createFloor(input: CreateFloorInput): Promise<Floor>;
   createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate>;
   updateTemplate(id: string, input: UpdateWorkspaceTemplateInput): Promise<WorkspaceTemplate>;
   createInstance(input: CreateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails>;

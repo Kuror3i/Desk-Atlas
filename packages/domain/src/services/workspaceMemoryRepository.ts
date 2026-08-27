@@ -1,5 +1,6 @@
 import type {
   WorkspaceAuditLogEntry,
+  CreateFloorInput,
   CreateWorkspaceInstanceInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
@@ -39,6 +40,18 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
       floors: Array.from(this.floors.values()),
       instances: Array.from(this.instances.values()),
     };
+  }
+
+  async createFloor(input: CreateFloorInput): Promise<Floor> {
+    const floor: Floor = {
+      id: `floor-${this.sequence++}`,
+      name: input.name,
+      floorNumber: null,
+      displayOrder: this.floors.size,
+      isActive: true,
+    };
+    this.floors.set(floor.id, floor);
+    return floor;
   }
 
   async getInstance(id: string): Promise<WorkspaceInstanceDetails> {

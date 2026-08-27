@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
   InMemoryMapRepository,
+  InMemoryWorkspaceRepository,
   MapConflictError,
   MapValidationError,
   createMapService,
+  createWorkspaceService,
   type Floor,
   type MapElementInput,
 } from '../packages/domain/src/index';
@@ -43,6 +45,28 @@ const workspaceB1 = {
 };
 
 async function run() {
+  const workspaceRepository = new InMemoryWorkspaceRepository();
+  const workspaceService = createWorkspaceService(workspaceRepository);
+  const placementTemplate = await workspaceService.createTemplate({
+    name: 'Skypod Table',
+    capacity: 1,
+    rateAmount: 125,
+    defaultShape: 'desk',
+    defaultColor: '#009689',
+  });
+  const placementOne = await workspaceService.createInstanceFromTemplate({
+    templateId: placementTemplate.id,
+    floorId: 'floor-default',
+  });
+  const placementTwo = await workspaceService.createInstanceFromTemplate({
+    templateId: placementTemplate.id,
+    floorId: 'floor-default',
+  });
+
+  assert.equal(placementOne.displayName, 'Skypod 1');
+  assert.equal(placementTwo.displayName, 'Skypod 2');
+  assert.notEqual(placementOne.instanceCode, placementTwo.instanceCode);
+
   const repository = new InMemoryMapRepository({
     floors: [floorA, floorB],
     workspaceInstances: [workspaceA1, workspaceA2, workspaceB1],
@@ -63,6 +87,34 @@ async function run() {
       zIndex: 2,
       label: 'A1',
       properties: { color: '#009689', shape: 'rounded-rectangle' },
+      isLocked: false,
+    },
+    {
+      id: 'element-pantry-a',
+      elementRole: 'STRUCTURE',
+      elementType: 'pantry',
+      x: 410,
+      y: 90,
+      width: 245,
+      height: 135,
+      rotation: 0,
+      zIndex: 4,
+      label: 'Pantry',
+      properties: { color: 'rgba(59, 130, 246, 0.1)' },
+      isLocked: false,
+    },
+    {
+      id: 'element-restroom-a',
+      elementRole: 'STRUCTURE',
+      elementType: 'restroom',
+      x: 700,
+      y: 90,
+      width: 118,
+      height: 122,
+      rotation: 0,
+      zIndex: 5,
+      label: 'Restroom',
+      properties: { color: 'rgba(249, 115, 22, 0.1)' },
       isLocked: false,
     },
     {
@@ -129,14 +181,44 @@ async function run() {
         role: 'WORKSPACE',
         type: 'desk',
         workspaceInstanceId: workspaceA1.id,
-        x: 100.125,
-        y: 120.5,
+        x: 100,
+        y: 120,
         width: 80,
         height: 60,
         rotation: 90,
         zIndex: 2,
         label: 'A1',
         properties: { color: '#009689', shape: 'rounded-rectangle' },
+        isLocked: false,
+      },
+      {
+        id: 'element-pantry-a',
+        role: 'STRUCTURE',
+        type: 'pantry',
+        workspaceInstanceId: null,
+        x: 420,
+        y: 100,
+        width: 240,
+        height: 140,
+        rotation: 0,
+        zIndex: 4,
+        label: 'Pantry',
+        properties: { color: 'rgba(59, 130, 246, 0.1)' },
+        isLocked: false,
+      },
+      {
+        id: 'element-restroom-a',
+        role: 'STRUCTURE',
+        type: 'restroom',
+        workspaceInstanceId: null,
+        x: 700,
+        y: 100,
+        width: 120,
+        height: 120,
+        rotation: 0,
+        zIndex: 5,
+        label: 'Restroom',
+        properties: { color: 'rgba(249, 115, 22, 0.1)' },
         isLocked: false,
       },
     ]

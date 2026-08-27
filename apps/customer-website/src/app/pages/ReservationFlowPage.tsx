@@ -31,6 +31,8 @@ export function ReservationFlowPage() {
   });
   const [selectedPrimaryWorkspace, setSelectedPrimaryWorkspace] = useState<Workspace | null>(preSelectedWorkspace || null);
   const [selectedAlternativeWorkspaces, setSelectedAlternativeWorkspaces] = useState<Workspace[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const totalSteps = 5;
 
@@ -131,10 +133,10 @@ export function ReservationFlowPage() {
   };
 
   const handleNext = () => {
-    // Validation for step 2: 4 alternative workspaces must be selected
-    if (currentStep === 2 && getAlternativeWorkspaces().length > 0) {
-      if (selectedAlternativeWorkspaces.length !== 4) {
-        alert("Please select exactly 4 alternative workspaces");
+    // Validation for step 2: up to 2 alternative workspaces can be selected (optional)
+    if (currentStep === 2) {
+      if (selectedAlternativeWorkspaces.length > 2) {
+        alert("You can select a maximum of 2 alternative workspaces.");
         return;
       }
     }
@@ -150,8 +152,65 @@ export function ReservationFlowPage() {
     }
   };
 
-  const handleSubmit = () => {
-    setCurrentStep(5);
+  const handleSubmit = async () => {
+    if (!formData.fullName || !formData.email) {
+      setSubmitError("Please provide your name and email.");
+      return;
+    }
+    if (!selectedPrimaryWorkspace) {
+      setSubmitError("Please select a primary workspace.");
+      return;
+    }
+    if (!formData.privacyConsent) {
+      setSubmitError("You must agree to the privacy policy.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError("");
+
+    try {
+      const candidates = [
+        {
+          rank: 0,
+          workspaceInstanceId: selectedPrimaryWorkspace.id,
+          startAt: `${formData.date}T${formData.time}:00`,
+          endAt: new Date(new Date(`${formData.date}T${formData.time}:00`).getTime() + Number(formData.duration) * 60 * 60 * 1000).toISOString(),
+        }
+      ];
+
+      selectedAlternativeWorkspaces.forEach((alt, index) => {
+        candidates.push({
+          rank: index + 1,
+          workspaceInstanceId: alt.id,
+          startAt: `${formData.date}T${formData.time}:00`,
+          endAt: new Date(new Date(`${formData.date}T${formData.time}:00`).getTime() + Number(formData.duration) * 60 * 60 * 1000).toISOString(),
+        });
+      });
+
+      const response = await fetch('/api/reservations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'WEB',
+          customerFirstName: formData.fullName.split(' ')[0] || formData.fullName,
+          customerLastName: formData.fullName.split(' ').slice(1).join(' ') || ' ',
+          customerEmail: formData.email,
+          candidates
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to create reservation');
+      }
+
+      setCurrentStep(5);
+    } catch (err: any) {
+      setSubmitError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const renderStep = () => {
@@ -210,8 +269,8 @@ export function ReservationFlowPage() {
             // Remove from selection
             setSelectedAlternativeWorkspaces(selectedAlternativeWorkspaces.filter(w => w.id !== workspace.id));
           } else {
-            // Add to selection if less than 4
-            if (selectedAlternativeWorkspaces.length < 4) {
+            // Add to selection if less than 2
+            if (selectedAlternativeWorkspaces.length < 2) {
               setSelectedAlternativeWorkspaces([...selectedAlternativeWorkspaces, workspace]);
             }
           }
@@ -220,10 +279,10 @@ export function ReservationFlowPage() {
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-semibold text-gray-900">
-              Step 2: Select 4 Alternative Workspaces *
+              Step 2: Select Up to 2 Alternative Workspaces (Optional)
             </h2>
             <p className="text-gray-600">
-              Select 4 alternative workspaces from the same zone/type in case your first choice becomes unavailable.
+              Select up to 2 alternative workspaces from the same zone/type in case your first choice becomes unavailable.
               This ensures you get the same price.
             </p>
 
@@ -239,7 +298,7 @@ export function ReservationFlowPage() {
               <div className="space-y-4">
                 <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
                   <p className="text-teal-800 font-medium">
-                    Selected: {selectedAlternativeWorkspaces.length} / 4 workspaces
+                    Selected: {selectedAlternativeWorkspaces.length} / 2 workspaces (Optional)
                   </p>
                   {selectedAlternativeWorkspaces.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -265,11 +324,11 @@ export function ReservationFlowPage() {
                       <button
                         key={workspace.id}
                         onClick={() => handleToggleAlternative(workspace)}
-                        disabled={!isSelected && selectedAlternativeWorkspaces.length >= 4}
+                        disabled={!isSelected && selectedAlternativeWorkspaces.length >= 2}
                         className={`p-4 border-2 rounded-lg text-left transition-all ${
                           isSelected
                             ? "border-teal-600 bg-teal-50"
-                            : selectedAlternativeWorkspaces.length >= 4
+                            : selectedAlternativeWorkspaces.length >= 2
                             ? "border-gray-200 bg-gray-100 cursor-not-allowed opacity-50"
                             : "border-gray-200 hover:border-teal-300"
                         }`}
@@ -298,11 +357,6 @@ export function ReservationFlowPage() {
                     );
                   })}
                 </div>
-                {selectedAlternativeWorkspaces.length < 4 && (
-                  <p className="text-sm text-red-600 mt-2">
-                    * Please select {4 - selectedAlternativeWorkspaces.length} more workspace{4 - selectedAlternativeWorkspaces.length !== 1 ? 's' : ''}
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -437,11 +491,19 @@ export function ReservationFlowPage() {
               </div>
             </div>
 
+            {submitError && (
+              <div className="bg-red-50 border border-red-200 text-red-600 rounded-lg p-4 text-sm">
+                {submitError}
+              </div>
+            )}
             <button
               onClick={handleSubmit}
-              className="w-full px-6 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors font-medium"
+              disabled={isSubmitting}
+              className={`w-full px-6 py-3 text-white rounded-lg transition-colors font-medium ${
+                isSubmitting ? "bg-gray-400 cursor-not-allowed" : "bg-teal-600 hover:bg-teal-700"
+              }`}
             >
-              Complete Reservation
+              {isSubmitting ? "Processing..." : "Complete Reservation"}
             </button>
           </div>
         );

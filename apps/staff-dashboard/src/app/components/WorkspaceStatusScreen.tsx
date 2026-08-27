@@ -1,51 +1,50 @@
-import { useState } from 'react';
-import { LayoutGrid, List, Circle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { LayoutGrid, List } from 'lucide-react';
+import { fetchPublishedMap } from '../lib/publishedMapApi';
 
 type WorkspaceStatus = 'available' | 'reserved' | 'occupied' | 'unavailable';
 
-interface Workspace {
+interface WorkspaceRecord {
   id: string;
   name: string;
   type: string;
   area: string;
   status: WorkspaceStatus;
-  currentUser?: string;
-  currentSession?: string;
-  reservedFor?: string;
-  reservationTime?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  capacity: number;
+  rateLabel: string;
 }
+
+const SVG_PADDING = 48;
 
 export function WorkspaceStatusScreen() {
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>(() => createFallbackRecords());
 
-  const workspaces: Workspace[] = [
-    { id: 'A-01', name: 'Desk A-01', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-02', name: 'Desk A-02', type: 'Desk', area: 'Zone A', status: 'occupied', currentUser: 'John Doe', currentSession: 'SES-101' },
-    { id: 'A-03', name: 'Desk A-03', type: 'Desk', area: 'Zone A', status: 'reserved', reservedFor: 'Jane Smith', reservationTime: '2:00 PM' },
-    { id: 'A-04', name: 'Desk A-04', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-05', name: 'Desk A-05', type: 'Desk', area: 'Zone A', status: 'occupied', currentUser: 'Alice Martinez', currentSession: 'SES-003' },
-    { id: 'A-06', name: 'Desk A-06', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-07', name: 'Desk A-07', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-08', name: 'Desk A-08', type: 'Desk', area: 'Zone A', status: 'occupied', currentUser: 'Bob Wilson', currentSession: 'SES-105' },
-    { id: 'A-09', name: 'Desk A-09', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-10', name: 'Desk A-10', type: 'Desk', area: 'Zone A', status: 'available' },
-    { id: 'A-11', name: 'Desk A-11', type: 'Desk', area: 'Zone A', status: 'reserved', reservedFor: 'Tom Brown', reservationTime: '3:30 PM' },
-    { id: 'A-12', name: 'Desk A-12', type: 'Desk', area: 'Zone A', status: 'occupied', currentUser: 'Sarah Johnson', currentSession: 'SES-001' },
-    { id: 'B-01', name: 'Desk B-01', type: 'Desk', area: 'Zone B', status: 'available' },
-    { id: 'B-02', name: 'Desk B-02', type: 'Desk', area: 'Zone B', status: 'available' },
-    { id: 'B-03', name: 'Desk B-03', type: 'Desk', area: 'Zone B', status: 'occupied', currentUser: 'Emily Chen', currentSession: 'SES-108' },
-    { id: 'B-04', name: 'Desk B-04', type: 'Desk', area: 'Zone B', status: 'available' },
-    { id: 'B-05', name: 'Desk B-05', type: 'Desk', area: 'Zone B', status: 'reserved', reservedFor: 'Emily Davis', reservationTime: '1:00 PM' },
-    { id: 'B-06', name: 'Desk B-06', type: 'Desk', area: 'Zone B', status: 'available' },
-    { id: 'MR-01', name: 'Meeting Room 1', type: 'Meeting Room', area: 'Main Floor', status: 'occupied', currentUser: 'Michael Chen', currentSession: 'SES-002' },
-    { id: 'MR-02', name: 'Meeting Room 2', type: 'Meeting Room', area: 'Main Floor', status: 'available' },
-    { id: 'MR-03', name: 'Meeting Room 3', type: 'Meeting Room', area: 'Main Floor', status: 'reserved', reservedFor: 'Lisa Anderson', reservationTime: '2:00 PM' },
-    { id: 'PO-01', name: 'Private Office 1', type: 'Private Office', area: 'Executive', status: 'occupied', currentUser: 'Emily Davis', currentSession: 'SES-007' },
-    { id: 'PO-02', name: 'Private Office 2', type: 'Private Office', area: 'Executive', status: 'occupied', currentUser: 'James Wilson', currentSession: 'SES-002' },
-    { id: 'PO-03', name: 'Private Office 3', type: 'Private Office', area: 'Executive', status: 'unavailable' },
-  ];
+  useEffect(() => {
+    let active = true;
+
+    fetchPublishedMap()
+      .then(({ published }) => {
+        if (!active) return;
+        const next = mapPublishedFloorToRecords(published);
+        if (next.length > 0) {
+          setWorkspaces(next);
+        }
+      })
+      .catch((error) => {
+        console.warn('Unable to load staff published map preview', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredWorkspaces = workspaces.filter((workspace) => {
     const matchesType = filterType === 'all' || workspace.type === filterType;
@@ -53,31 +52,41 @@ export function WorkspaceStatusScreen() {
     return matchesType && matchesStatus;
   });
 
-  const getStatusColor = (status: WorkspaceStatus) => {
-    const colors = {
-      available: 'bg-green-100 border-green-300 hover:bg-green-200',
-      reserved: 'bg-[#b2dfdb] border-[#80cbc4] hover:bg-[#80cbc4]',
-      occupied: 'bg-orange-100 border-orange-300 hover:bg-orange-200',
-      unavailable: 'bg-gray-100 border-gray-300 hover:bg-gray-200',
-    };
-    return colors[status];
-  };
+  const mapBounds = useMemo(() => {
+    if (filteredWorkspaces.length === 0) {
+      return { width: 1200, height: 720 };
+    }
 
-  const getStatusBadgeColor = (status: WorkspaceStatus) => {
-    const colors = {
-      available: 'bg-green-100 text-green-800',
-      reserved: 'bg-[#b2dfdb] text-[#00796b]',
-      occupied: 'bg-orange-100 text-orange-800',
-      unavailable: 'bg-gray-100 text-gray-800',
+    const maxX = Math.max(...filteredWorkspaces.map((workspace) => workspace.x + workspace.width));
+    const maxY = Math.max(...filteredWorkspaces.map((workspace) => workspace.y + workspace.height));
+
+    return {
+      width: Math.max(1200, maxX + SVG_PADDING),
+      height: Math.max(720, maxY + SVG_PADDING),
     };
-    return colors[status];
-  };
+  }, [filteredWorkspaces]);
+
+  const zoneLabels = useMemo(() => {
+    const labels = new Map<string, { x: number; y: number }>();
+
+    for (const workspace of filteredWorkspaces) {
+      const current = labels.get(workspace.area);
+      const nextX = workspace.x + workspace.width / 2;
+      const nextY = Math.max(32, workspace.y - 18);
+
+      if (!current || nextX < current.x) {
+        labels.set(workspace.area, { x: nextX, y: nextY });
+      }
+    }
+
+    return labels;
+  }, [filteredWorkspaces]);
 
   const statusCounts = {
-    available: workspaces.filter((w) => w.status === 'available').length,
-    reserved: workspaces.filter((w) => w.status === 'reserved').length,
-    occupied: workspaces.filter((w) => w.status === 'occupied').length,
-    unavailable: workspaces.filter((w) => w.status === 'unavailable').length,
+    available: workspaces.filter((workspace) => workspace.status === 'available').length,
+    reserved: workspaces.filter((workspace) => workspace.status === 'reserved').length,
+    occupied: workspaces.filter((workspace) => workspace.status === 'occupied').length,
+    unavailable: workspaces.filter((workspace) => workspace.status === 'unavailable').length,
   };
 
   return (
@@ -87,7 +96,6 @@ export function WorkspaceStatusScreen() {
         <p className="text-gray-600 mt-1">Real-time workspace occupancy and availability</p>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center gap-3">
@@ -119,25 +127,23 @@ export function WorkspaceStatusScreen() {
         </div>
       </div>
 
-      {/* Controls */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
         <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-          {/* Filters */}
           <div className="flex flex-wrap gap-2">
             <select
               value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
+              onChange={(event) => setFilterType(event.target.value)}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#009689]"
             >
               <option value="all">All Types</option>
               <option value="Desk">Desks</option>
               <option value="Meeting Room">Meeting Rooms</option>
-              <option value="Private Office">Private Offices</option>
+              <option value="Private Booth">Private Booths</option>
             </select>
 
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
+              onChange={(event) => setFilterStatus(event.target.value)}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#009689]"
             >
               <option value="all">All Statuses</option>
@@ -148,7 +154,6 @@ export function WorkspaceStatusScreen() {
             </select>
           </div>
 
-          {/* View Toggle */}
           <div className="flex gap-2 bg-gray-100 p-1 rounded-lg">
             <button
               onClick={() => setViewMode('map')}
@@ -172,45 +177,55 @@ export function WorkspaceStatusScreen() {
         </div>
       </div>
 
-      {/* Map View */}
       {viewMode === 'map' && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
-            {filteredWorkspaces.map((workspace) => (
-              <div
-                key={workspace.id}
-                className={`relative h-20 rounded-lg border-2 ${getStatusColor(workspace.status)} transition-all cursor-pointer group`}
-                title={`${workspace.name} - ${workspace.status}`}
-              >
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-2">
-                  <span className="text-xs font-medium text-gray-700">{workspace.id}</span>
-                  <Circle className={`w-2 h-2 mt-1 ${
-                    workspace.status === 'available' ? 'text-green-500' :
-                    workspace.status === 'reserved' ? 'text-[#009689]' :
-                    workspace.status === 'occupied' ? 'text-orange-500' :
-                    'text-gray-500'
-                  } fill-current`} />
-                </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-6 overflow-hidden">
+          <div className="overflow-auto">
+            <svg viewBox={`0 0 ${mapBounds.width} ${mapBounds.height}`} className="w-full min-h-[32rem]">
+              <defs>
+                <pattern id="staff-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5e7eb" strokeWidth="1" />
+                </pattern>
+              </defs>
+              <rect width={mapBounds.width} height={mapBounds.height} fill="url(#staff-grid)" />
 
-                {/* Tooltip */}
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                  <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
-                    <p className="font-medium">{workspace.name}</p>
-                    <p className="text-gray-300">{workspace.type}</p>
-                    <p className="text-gray-300 capitalize">{workspace.status}</p>
-                    {workspace.currentUser && (
-                      <p className="text-gray-300 mt-1">User: {workspace.currentUser}</p>
-                    )}
-                    {workspace.reservedFor && (
-                      <p className="text-gray-300 mt-1">Reserved: {workspace.reservedFor}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+              {Array.from(zoneLabels.entries()).map(([zone, position]) => (
+                <text
+                  key={zone}
+                  x={position.x}
+                  y={position.y}
+                  className="fill-gray-700 text-[18px] font-semibold"
+                  textAnchor="middle"
+                >
+                  {zone}
+                </text>
+              ))}
+
+              {filteredWorkspaces.map((workspace) => (
+                <g key={workspace.id}>
+                  <rect
+                    x={workspace.x}
+                    y={workspace.y}
+                    width={workspace.width}
+                    height={workspace.height}
+                    rx={workspace.type === 'Meeting Room' || workspace.type === 'Private Booth' ? 14 : 10}
+                    className={`${getStatusFill(workspace.status)} transition-colors`}
+                    stroke="#d1d5db"
+                    strokeWidth="2"
+                  />
+                  <text
+                    x={workspace.x + workspace.width / 2}
+                    y={workspace.y + workspace.height / 2}
+                    className="fill-white text-[13px] font-semibold"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                  >
+                    {workspace.id}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
 
-          {/* Legend */}
           <div className="flex items-center gap-6 mt-6 pt-6 border-t border-gray-200">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 bg-green-100 border-2 border-green-300 rounded"></div>
@@ -232,7 +247,6 @@ export function WorkspaceStatusScreen() {
         </div>
       )}
 
-      {/* List View */}
       {viewMode === 'list' && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <table className="w-full">
@@ -273,18 +287,8 @@ export function WorkspaceStatusScreen() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {workspace.currentUser && (
-                      <p className="text-sm text-gray-700">User: {workspace.currentUser}</p>
-                    )}
-                    {workspace.reservedFor && (
-                      <p className="text-sm text-gray-700">Reserved for: {workspace.reservedFor} at {workspace.reservationTime}</p>
-                    )}
-                    {workspace.status === 'available' && (
-                      <p className="text-sm text-gray-500">Ready for use</p>
-                    )}
-                    {workspace.status === 'unavailable' && (
-                      <p className="text-sm text-gray-500">Not available</p>
-                    )}
+                    <p className="text-sm text-gray-700">Capacity: {workspace.capacity}</p>
+                    <p className="text-sm text-gray-500">{workspace.rateLabel}</p>
                   </td>
                 </tr>
               ))}
@@ -294,4 +298,78 @@ export function WorkspaceStatusScreen() {
       )}
     </div>
   );
+}
+
+function getStatusFill(status: WorkspaceStatus) {
+  switch (status) {
+    case 'available':
+      return 'fill-green-500';
+    case 'reserved':
+      return 'fill-[#80cbc4]';
+    case 'occupied':
+      return 'fill-orange-400';
+    case 'unavailable':
+      return 'fill-gray-400';
+  }
+}
+
+function getStatusBadgeColor(status: WorkspaceStatus) {
+  switch (status) {
+    case 'available':
+      return 'bg-green-100 text-green-800';
+    case 'reserved':
+      return 'bg-[#b2dfdb] text-[#00796b]';
+    case 'occupied':
+      return 'bg-orange-100 text-orange-800';
+    case 'unavailable':
+      return 'bg-gray-100 text-gray-800';
+  }
+}
+
+function createFallbackRecords(): WorkspaceRecord[] {
+  return [
+    { id: 'A1', name: 'Desk A1', type: 'Desk', area: 'Zone A', status: 'available', x: 200, y: 120, width: 72, height: 72, capacity: 1, rateLabel: '$15/hour' },
+    { id: 'A2', name: 'Desk A2', type: 'Desk', area: 'Zone A', status: 'available', x: 284, y: 120, width: 72, height: 72, capacity: 1, rateLabel: '$15/hour' },
+    { id: 'A3', name: 'Desk A3', type: 'Desk', area: 'Zone A', status: 'occupied', x: 368, y: 120, width: 72, height: 72, capacity: 1, rateLabel: '$15/hour' },
+    { id: 'B1', name: 'Desk B1', type: 'Desk', area: 'Zone B', status: 'available', x: 820, y: 120, width: 72, height: 72, capacity: 1, rateLabel: '$15/hour' },
+    { id: 'B2', name: 'Desk B2', type: 'Desk', area: 'Zone B', status: 'reserved', x: 904, y: 120, width: 72, height: 72, capacity: 1, rateLabel: '$15/hour' },
+    { id: 'MR1', name: 'Meeting Room 1', type: 'Meeting Room', area: 'Meeting Rooms', status: 'available', x: 440, y: 420, width: 160, height: 100, capacity: 6, rateLabel: '$60/hour' },
+  ];
+}
+
+function mapPublishedFloorToRecords(
+  published: Awaited<ReturnType<typeof fetchPublishedMap>>['published']
+): WorkspaceRecord[] {
+  return published.elements
+    .filter((element) => element.elementRole === 'WORKSPACE' && element.workspace)
+    .map((element) => {
+      const workspace = element.workspace!;
+      return {
+        id: workspace.instanceCode,
+        name: workspace.displayName,
+        type: mapWorkspaceType(element.elementType),
+        area: readZoneName(element.style, workspace.instanceCode),
+        status: workspace.isBookable ? 'available' : 'unavailable',
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height,
+        capacity: workspace.capacity,
+        rateLabel: workspace.pricingUnit === 'HOURLY' ? `$${workspace.rateAmount}/hour` : `$${workspace.rateAmount}`,
+      };
+    });
+}
+
+function mapWorkspaceType(elementType: string): string {
+  if (elementType === 'meeting-room') return 'Meeting Room';
+  if (elementType === 'phone-booth') return 'Private Booth';
+  return 'Desk';
+}
+
+function readZoneName(style: Record<string, string | number | boolean | null>, instanceCode: string): string {
+  if (typeof style.zone === 'string' && style.zone.length > 0) {
+    return style.zone;
+  }
+
+  return instanceCode.toUpperCase().startsWith('B') ? 'Zone B' : 'Zone A';
 }

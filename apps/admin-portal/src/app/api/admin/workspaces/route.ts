@@ -6,8 +6,14 @@ export const runtime = 'nodejs';
 
 export async function GET() {
   try {
-    const spaces = await getAdminWorkspaceService().listAdminSpaces();
-    return NextResponse.json({ spaces });
+    const service = getAdminWorkspaceService();
+    const [spaces, catalog] = await Promise.all([service.listAdminSpaces(), service.listCatalog()]);
+    return NextResponse.json({
+      spaces,
+      templates: catalog.templates,
+      floors: catalog.floors,
+      instances: catalog.instances,
+    });
   } catch (error) {
     return workspaceErrorResponse(error);
   }

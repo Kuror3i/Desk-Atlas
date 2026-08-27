@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MapPin, Info, X } from 'lucide-react';
+import type { PublishedFloorMap } from '@deskatlas/domain';
 
 type WorkspaceStatus = 'available' | 'pending' | 'reserved' | 'occupied';
 
@@ -9,44 +10,15 @@ type Workspace = {
   zone: string;
   status: WorkspaceStatus;
   type: 'desk' | 'meeting-room' | 'booth';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rateLabel: string;
+  capacity: number;
 };
 
-const mockWorkspaces: Workspace[] = [
-  // Zone A
-  { id: 'A1', label: 'A1', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A2', label: 'A2', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A3', label: 'A3', zone: 'Zone A', status: 'pending', type: 'desk' },
-  { id: 'A4', label: 'A4', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A5', label: 'A5', zone: 'Zone A', status: 'reserved', type: 'desk' },
-  { id: 'A6', label: 'A6', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A7', label: 'A7', zone: 'Zone A', status: 'pending', type: 'desk' },
-  { id: 'A8', label: 'A8', zone: 'Zone A', status: 'occupied', type: 'desk' },
-  { id: 'A9', label: 'A9', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A10', label: 'A10', zone: 'Zone A', status: 'available', type: 'desk' },
-  { id: 'A11', label: 'A11', zone: 'Zone A', status: 'pending', type: 'desk' },
-  { id: 'A12', label: 'A12', zone: 'Zone A', status: 'available', type: 'desk' },
-
-  // Zone B
-  { id: 'B1', label: 'B1', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B2', label: 'B2', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B3', label: 'B3', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B4', label: 'B4', zone: 'Zone B', status: 'reserved', type: 'desk' },
-  { id: 'B5', label: 'B5', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B6', label: 'B6', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B7', label: 'B7', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B8', label: 'B8', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B9', label: 'B9', zone: 'Zone B', status: 'available', type: 'desk' },
-  { id: 'B10', label: 'B10', zone: 'Zone B', status: 'pending', type: 'desk' },
-  { id: 'B11', label: 'B11', zone: 'Zone B', status: 'pending', type: 'desk' },
-  { id: 'B12', label: 'B12', zone: 'Zone B', status: 'available', type: 'desk' },
-
-  // Meeting Rooms
-  { id: 'M1', label: 'Meeting 1', zone: 'Meeting Rooms', status: 'available', type: 'meeting-room' },
-  { id: 'M2', label: 'Meeting 2', zone: 'Meeting Rooms', status: 'reserved', type: 'meeting-room' },
-  { id: 'M3', label: 'Meeting 3', zone: 'Meeting Rooms', status: 'available', type: 'meeting-room' },
-  { id: 'B1', label: 'Booth 1', zone: 'Meeting Rooms', status: 'available', type: 'booth' },
-  { id: 'B2', label: 'Booth 2', zone: 'Meeting Rooms', status: 'available', type: 'booth' },
-];
+const SVG_PADDING = 48;
 
 const statusColors = {
   available: 'bg-green-500 hover:bg-green-600',
@@ -65,17 +37,71 @@ const statusLabels = {
 export function WorkspaceMap() {
   const [showRecommended, setShowRecommended] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(() => createFallbackWorkspaces());
 
-  const zoneAWorkspaces = mockWorkspaces.filter((w) => w.zone === 'Zone A');
-  const zoneBWorkspaces = mockWorkspaces.filter((w) => w.zone === 'Zone B');
-  const meetingRooms = mockWorkspaces.filter((w) => w.zone === 'Meeting Rooms');
+  useEffect(() => {
+    let active = true;
+
+    fetch('/api/published-map', { cache: 'no-store' })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(body.error ?? `Published map request failed with status ${response.status}`);
+        }
+        return body.published as PublishedFloorMap | null;
+      })
+      .then((published) => {
+        if (!active || !published) return;
+        const next = mapPublishedFloorToWorkspaces(published);
+        if (next.length > 0) {
+          setWorkspaces(next);
+        }
+      })
+      .catch((error) => {
+        console.warn('Unable to load admin published map preview', error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const stats = {
-    available: mockWorkspaces.filter((w) => w.status === 'available').length,
-    pending: mockWorkspaces.filter((w) => w.status === 'pending').length,
-    reserved: mockWorkspaces.filter((w) => w.status === 'reserved').length,
-    occupied: mockWorkspaces.filter((w) => w.status === 'occupied').length,
+    available: workspaces.filter((workspace) => workspace.status === 'available').length,
+    pending: workspaces.filter((workspace) => workspace.status === 'pending').length,
+    reserved: workspaces.filter((workspace) => workspace.status === 'reserved').length,
+    occupied: workspaces.filter((workspace) => workspace.status === 'occupied').length,
   };
+
+  const mapBounds = useMemo(() => {
+    if (workspaces.length === 0) {
+      return { width: 1200, height: 720 };
+    }
+
+    const maxX = Math.max(...workspaces.map((workspace) => workspace.x + workspace.width));
+    const maxY = Math.max(...workspaces.map((workspace) => workspace.y + workspace.height));
+
+    return {
+      width: Math.max(1200, maxX + SVG_PADDING),
+      height: Math.max(720, maxY + SVG_PADDING),
+    };
+  }, [workspaces]);
+
+  const zoneLabels = useMemo(() => {
+    const labels = new Map<string, { x: number; y: number }>();
+
+    for (const workspace of workspaces) {
+      const current = labels.get(workspace.zone);
+      const nextX = workspace.x + workspace.width / 2;
+      const nextY = Math.max(32, workspace.y - 18);
+
+      if (!current || nextX < current.x) {
+        labels.set(workspace.zone, { x: nextX, y: nextY });
+      }
+    }
+
+    return labels;
+  }, [workspaces]);
 
   const handleWorkspaceClick = (workspace: Workspace) => {
     setSelectedWorkspace(workspace);
@@ -83,13 +109,11 @@ export function WorkspaceMap() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-gray-900">Workspace Map</h2>
         <p className="text-gray-600 mt-1">Monitor workspace availability and layout</p>
       </div>
 
-      {/* Legend and Controls */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-6">
@@ -125,7 +149,6 @@ export function WorkspaceMap() {
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
@@ -157,69 +180,54 @@ export function WorkspaceMap() {
         </div>
       </div>
 
-      {/* Map Container */}
       <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm">
-        <div className="space-y-12">
-          {/* Zones */}
-          <div className="grid grid-cols-2 gap-16">
-            {/* Zone A */}
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">Zone A</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {zoneAWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    onClick={() => handleWorkspaceClick(workspace)}
-                    className={`aspect-square rounded-lg ${statusColors[workspace.status]} text-white font-semibold text-sm flex items-center justify-center transition-all shadow-md hover:shadow-lg ${
-                      showRecommended && workspace.status === 'available' ? 'ring-4 ring-blue-400' : ''
-                    }`}
-                  >
-                    {workspace.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+        <div className="overflow-auto">
+          <svg viewBox={`0 0 ${mapBounds.width} ${mapBounds.height}`} className="w-full min-h-[32rem]">
+            <defs>
+              <pattern id="admin-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5e7eb" strokeWidth="1" />
+              </pattern>
+            </defs>
+            <rect width={mapBounds.width} height={mapBounds.height} fill="url(#admin-grid)" />
 
-            {/* Zone B */}
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">Zone B</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {zoneBWorkspaces.map((workspace) => (
-                  <button
-                    key={workspace.id}
-                    onClick={() => handleWorkspaceClick(workspace)}
-                    className={`aspect-square rounded-lg ${statusColors[workspace.status]} text-white font-semibold text-sm flex items-center justify-center transition-all shadow-md hover:shadow-lg ${
-                      showRecommended && workspace.status === 'available' ? 'ring-4 ring-blue-400' : ''
-                    }`}
-                  >
-                    {workspace.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+            {Array.from(zoneLabels.entries()).map(([zone, position]) => (
+              <text
+                key={zone}
+                x={position.x}
+                y={position.y}
+                className="fill-gray-700 text-[18px] font-semibold"
+                textAnchor="middle"
+              >
+                {zone}
+              </text>
+            ))}
 
-          {/* Meeting Rooms */}
-          <div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">Meeting Rooms</h3>
-            <div className="flex justify-center gap-4">
-              {meetingRooms.map((workspace) => (
-                <button
-                  key={workspace.id}
-                  onClick={() => handleWorkspaceClick(workspace)}
-                  className={`w-32 h-20 rounded-lg ${statusColors[workspace.status]} text-white font-semibold text-sm flex items-center justify-center transition-all shadow-md hover:shadow-lg ${
-                    showRecommended && workspace.status === 'available' ? 'ring-4 ring-blue-400' : ''
-                  }`}
+            {workspaces.map((workspace) => (
+              <g key={workspace.id} onClick={() => handleWorkspaceClick(workspace)} className="cursor-pointer">
+                <rect
+                  x={workspace.x}
+                  y={workspace.y}
+                  width={workspace.width}
+                  height={workspace.height}
+                  rx={workspace.type === 'meeting-room' || workspace.type === 'booth' ? 14 : 10}
+                  className={`${getMapFill(workspace.status)} transition-all`}
+                  style={{ filter: showRecommended && workspace.status === 'available' ? 'drop-shadow(0 0 8px rgba(59,130,246,0.45))' : undefined }}
+                />
+                <text
+                  x={workspace.x + workspace.width / 2}
+                  y={workspace.y + workspace.height / 2}
+                  className="fill-white text-[13px] font-semibold pointer-events-none"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
                 >
                   {workspace.label}
-                </button>
-              ))}
-            </div>
-          </div>
+                </text>
+              </g>
+            ))}
+          </svg>
         </div>
       </div>
 
-      {/* Workspace Details Modal */}
       {selectedWorkspace && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
@@ -250,40 +258,27 @@ export function WorkspaceMap() {
               <div>
                 <p className="text-sm text-gray-500 mb-1">Status</p>
                 <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
-                  selectedWorkspace.status === 'available' ? 'bg-green-100 text-green-700' :
-                  selectedWorkspace.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                  selectedWorkspace.status === 'reserved' ? 'bg-red-100 text-red-700' :
-                  'bg-gray-100 text-gray-700'
+                  selectedWorkspace.status === 'available'
+                    ? 'bg-green-100 text-green-700'
+                    : selectedWorkspace.status === 'pending'
+                      ? 'bg-yellow-100 text-yellow-700'
+                      : selectedWorkspace.status === 'reserved'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-gray-100 text-gray-700'
                 }`}>
                   {statusLabels[selectedWorkspace.status]}
                 </span>
               </div>
 
-              {selectedWorkspace.status === 'reserved' && (
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <div className="flex items-start gap-2">
-                    <Info className="w-5 h-5 text-blue-600 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-blue-900">Reserved by</p>
-                      <p className="text-sm text-blue-700 mt-1">John Doe</p>
-                      <p className="text-xs text-blue-600 mt-1">Today, 2:00 PM - 5:00 PM</p>
-                    </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-start gap-2">
+                  <Info className="w-5 h-5 text-gray-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{selectedWorkspace.rateLabel}</p>
+                    <p className="text-sm text-gray-700 mt-1">Capacity: {selectedWorkspace.capacity}</p>
                   </div>
                 </div>
-              )}
-
-              {selectedWorkspace.status === 'occupied' && (
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-start gap-2">
-                    <Info className="w-5 h-5 text-gray-600 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">Currently occupied</p>
-                      <p className="text-sm text-gray-700 mt-1">Sarah Johnson</p>
-                      <p className="text-xs text-gray-600 mt-1">Checked in at 9:30 AM</p>
-                    </div>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
 
             <button
@@ -297,4 +292,67 @@ export function WorkspaceMap() {
       )}
     </div>
   );
+}
+
+function createFallbackWorkspaces(): Workspace[] {
+  return [
+    { id: 'A1', label: 'A1', zone: 'Zone A', status: 'available', type: 'desk', x: 200, y: 120, width: 72, height: 72, rateLabel: '$15/hour', capacity: 1 },
+    { id: 'A2', label: 'A2', zone: 'Zone A', status: 'available', type: 'desk', x: 284, y: 120, width: 72, height: 72, rateLabel: '$15/hour', capacity: 1 },
+    { id: 'A3', label: 'A3', zone: 'Zone A', status: 'pending', type: 'desk', x: 368, y: 120, width: 72, height: 72, rateLabel: '$15/hour', capacity: 1 },
+    { id: 'B1', label: 'B1', zone: 'Zone B', status: 'available', type: 'desk', x: 820, y: 120, width: 72, height: 72, rateLabel: '$15/hour', capacity: 1 },
+    { id: 'B2', label: 'B2', zone: 'Zone B', status: 'reserved', type: 'desk', x: 904, y: 120, width: 72, height: 72, rateLabel: '$15/hour', capacity: 1 },
+    { id: 'M1', label: 'Meeting 1', zone: 'Meeting Rooms', status: 'available', type: 'meeting-room', x: 440, y: 420, width: 160, height: 100, rateLabel: '$60/hour', capacity: 6 },
+  ];
+}
+
+function getMapFill(status: WorkspaceStatus) {
+  switch (status) {
+    case 'available':
+      return 'fill-green-500';
+    case 'pending':
+      return 'fill-yellow-500';
+    case 'reserved':
+      return 'fill-red-500';
+    case 'occupied':
+      return 'fill-gray-400';
+  }
+}
+
+function mapPublishedFloorToWorkspaces(published: PublishedFloorMap): Workspace[] {
+  return published.elements
+    .filter((element) => element.elementRole === 'WORKSPACE' && element.workspace)
+    .map((element) => ({
+      id: element.workspace!.workspaceInstanceId,
+      label: element.workspace!.instanceCode,
+      zone: readZone(element.style, element.workspace!.instanceCode, element.elementType),
+      status: element.workspace!.isBookable ? 'available' : 'occupied',
+      type: mapWorkspaceType(element.elementType),
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+      rateLabel:
+        element.workspace!.pricingUnit === 'HOURLY'
+          ? `$${element.workspace!.rateAmount}/hour`
+          : `$${element.workspace!.rateAmount}`,
+      capacity: element.workspace!.capacity,
+    }));
+}
+
+function mapWorkspaceType(elementType: string): Workspace['type'] {
+  if (elementType === 'meeting-room') return 'meeting-room';
+  if (elementType === 'phone-booth') return 'booth';
+  return 'desk';
+}
+
+function readZone(style: Record<string, string | number | boolean | null>, instanceCode: string, elementType: string) {
+  if (typeof style.zone === 'string' && style.zone.length > 0) {
+    return style.zone;
+  }
+
+  if (elementType === 'meeting-room' || elementType === 'phone-booth') {
+    return 'Meeting Rooms';
+  }
+
+  return instanceCode.toUpperCase().includes('B') ? 'Zone B' : 'Zone A';
 }

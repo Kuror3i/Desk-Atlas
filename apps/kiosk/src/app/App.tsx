@@ -7,6 +7,7 @@ import { CalendlyStyleReservation } from './components/CalendlyStyleReservation'
 import { QRScanFlow } from './components/QRScanFlow';
 import { ReferenceCodeFlow } from './components/ReferenceCodeFlow';
 import { fetchPublishedMap } from './lib/publishedMapApi';
+import type { Floor } from '@deskatlas/domain';
 
 // Mock workspace data
 const fallbackDesks: Desk[] = [
@@ -55,29 +56,41 @@ const fallbackDesks: Desk[] = [
 type FlowState = 'map' | 'book-now' | 'book-reservation' | 'qr-scan' | 'reference-code';
 
 export default function App() {
+  const [floors, setFloors] = useState<Floor[]>([]);
+  const [selectedFloorId, setSelectedFloorId] = useState('');
   const [selectedDesk, setSelectedDesk] = useState<Desk | null>(null);
   const [flowState, setFlowState] = useState<FlowState>('map');
   const [desks, setDesks] = useState<Desk[]>(fallbackDesks);
+  const [mapLoadState, setMapLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [mapError, setMapError] = useState('');
+  const [mapReloadToken, setMapReloadToken] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
+    setMapLoadState('loading');
+    setMapError('');
 
-    fetchPublishedMap()
-      .then(({ published }) => {
+    fetchPublishedMap(selectedFloorId || undefined)
+      .then(({ floors: nextFloors, published }) => {
         if (!isMounted) return;
+        setFloors(nextFloors);
+        setSelectedFloorId((current) => current || published.floor.id);
         const publishedDesks = mapPublishedFloorMapToDesks(published);
-        if (publishedDesks.length > 0) {
-          setDesks(publishedDesks);
-        }
+        setDesks(publishedDesks);
+        setSelectedDesk(null);
+        setMapLoadState('ready');
       })
       .catch((error) => {
+        if (!isMounted) return;
         console.warn('Unable to load kiosk published map', error);
+        setMapLoadState('error');
+        setMapError(error instanceof Error ? error.message : 'Unable to load the kiosk workspace map.');
       });
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [mapReloadToken, selectedFloorId]);
 
   const handleDeskClick = (desk: Desk) => {
     setSelectedDesk(desk);
@@ -125,6 +138,25 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-3">
+              <div className="flex flex-col">
+                <label className="text-xs font-medium text-gray-500 mb-1">Floor</label>
+                <select
+                  value={selectedFloorId}
+                  onChange={(event) => setSelectedFloorId(event.target.value)}
+                  className="px-4 py-2 border border-gray-300 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#009689]"
+                  disabled={floors.length === 0 || mapLoadState === 'loading'}
+                >
+                  {floors.length === 0 ? (
+                    <option value="">Default Floor</option>
+                  ) : (
+                    floors.map((floor) => (
+                      <option key={floor.id} value={floor.id}>
+                        {floor.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
               <button
                 onClick={handleScanQR}
                 className="flex items-center gap-3 text-white px-6 py-3 rounded-xl transition-colors"
@@ -149,11 +181,45 @@ export default function App() {
 
           {/* Main Content */}
           <div className="h-[calc(100%-6rem)] p-8">
-            <WorkspaceMap
-              desks={desks}
-              onDeskClick={handleDeskClick}
-              selectedDeskId={selectedDesk?.id}
-            />
+            {mapLoadState === 'loading' && (
+              <div className="bg-white rounded-2xl border border-teal-200 p-8 text-center">
+                <p className="text-lg font-semibold text-teal-900">Loading published workspace map...</p>
+                <p className="text-sm text-teal-700 mt-2">DeskAtlas is fetching the latest kiosk floor geometry.</p>
+              </div>
+            )}
+
+            {mapLoadState === 'error' && (
+              <div className="bg-white rounded-2xl border border-red-200 p-8 text-center space-y-4">
+                <div>
+                  <p className="text-lg font-semibold text-red-900">Published map unavailable</p>
+                  <p className="text-sm text-red-700 mt-2">{mapError}</p>
+                </div>
+                <button
+                  onClick={() => setMapReloadToken((current) => current + 1)}
+                  className="px-5 py-3 rounded-xl text-white font-medium"
+                  style={{ backgroundColor: '#dc2626' }}
+                >
+                  Retry Map Load
+                </button>
+              </div>
+            )}
+
+            {mapLoadState === 'ready' && desks.length === 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+                <p className="text-lg font-semibold text-gray-900">No published workspaces on this floor</p>
+                <p className="text-sm text-gray-600 mt-2">
+                  Select another floor or wait for Admin to publish workspace geometry for this floor.
+                </p>
+              </div>
+            )}
+
+            {mapLoadState === 'ready' && desks.length > 0 && (
+              <WorkspaceMap
+                desks={desks}
+                onDeskClick={handleDeskClick}
+                selectedDeskId={selectedDesk?.id}
+              />
+            )}
           </div>
 
           {/* Desk Schedule Modal */}

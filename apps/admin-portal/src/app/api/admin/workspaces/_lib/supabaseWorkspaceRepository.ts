@@ -1,5 +1,6 @@
 import type {
   WorkspaceAuditLogEntry,
+  CreateFloorInput,
   CreateWorkspaceInstanceInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
@@ -107,6 +108,22 @@ export class SupabaseWorkspaceRepository implements WorkspaceRepository {
 
     if (!row) throw new Error(`Instance not found: ${id}`);
     return mapInstanceDetails(row);
+  }
+
+  async createFloor(input: CreateFloorInput): Promise<Floor> {
+    const existingFloors = await this.request<FloorRow[]>('/floors?select=display_order&order=display_order.desc&limit=1');
+    const nextOrder = existingFloors.length > 0 ? existingFloors[0].display_order + 1 : 1;
+    
+    const [row] = await this.request<FloorRow[]>('/floors', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: input.name,
+        display_order: nextOrder,
+        is_active: true,
+      }),
+      prefer: 'return=representation',
+    });
+    return mapFloor(row);
   }
 
   async createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate> {

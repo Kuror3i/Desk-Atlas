@@ -2,6 +2,8 @@
 
 Before implementation, read:
 
+`docs/INDEX.md`
+
 `docs/IMPLEMENTATION_STATUS.md`
 
 Never assume a milestone is complete solely because code exists.
@@ -10,6 +12,12 @@ Use this ledger plus tests to determine project progress.
 After successfully completing a milestone, update only its status and
 verification notes. Do not modify locked specification documents unless
 explicitly instructed.
+
+Always use `docs/INDEX.md` as part of the operating instructions for:
+
+- required preflight reading
+- shared ledger updates after every milestone attempt
+- frontend limitation documentation expectations
 
 ## 1. Project Documentation Is Mandatory
 
@@ -60,14 +68,15 @@ Before editing code:
 
 1. Confirm repository root.
 2. Read this `AGENTS.md`.
-3. Inspect `/docs`.
-4. Read the five authoritative DeskAtlas documents above.
-5. Identify the exact milestone being requested.
-6. Identify its corresponding PRD feature IDs.
-7. Read the milestone's dependencies and acceptance criteria.
-8. Inspect `git status`.
-9. Inspect the existing implementation related to the feature.
-10. Identify whether the required frontend UI already exists.
+3. Read `docs/INDEX.md`.
+4. Inspect `/docs`.
+5. Read the five authoritative DeskAtlas documents above.
+6. Identify the exact milestone being requested.
+7. Identify its corresponding PRD feature IDs.
+8. Read the milestone's dependencies and acceptance criteria.
+9. Inspect `git status`.
+10. Inspect the existing implementation related to the feature.
+11. Identify whether the required frontend UI already exists.
 
 Do not write code before completing this preflight.
 
@@ -377,6 +386,15 @@ Wait for user approval.
 ---
 
 ## 13. Milestone Completion Report
+
+Before returning the final milestone report, re-check `docs/INDEX.md` and
+update the shared ledger files it requires for every milestone attempt:
+
+- `docs/IMPLEMENTATION_STATUS.md`
+- `docs/frontend-limitation/frontend-limitations.md`
+
+This applies to both PASS and BLOCKED outcomes. Do not skip these updates just
+because a milestone is blocked or partially implemented.
 
 At completion return:
 
