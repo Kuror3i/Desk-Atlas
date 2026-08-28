@@ -1,0 +1,45 @@
+"use client";
+
+import { useState } from 'react';
+import { useAuth } from '@/features/auth';
+
+export function useCheckInActions() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const performAction = async (reservationId: string, action: 'check-in' | 'check-out') => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/operations/reservations/${reservationId}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: {
+            userId: 'staff-user-id', // Mocked user ID since auth is mocked until M17
+            role: user?.role?.toUpperCase() || 'STAFF'
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to ${action}`);
+      }
+
+      return await res.json();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setError(msg);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkIn = (id: string) => performAction(id, 'check-in');
+  const checkOut = (id: string) => performAction(id, 'check-out');
+
+  return { checkIn, checkOut, loading, error };
+}
