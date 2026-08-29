@@ -1,29 +1,62 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { AdminReservationFilter, AdminReservationSummary } from '@deskatlas/domain';
 
 export function ReservationList() {
   const router = useRouter();
-  
-  const resFilters = [
-    { label: 'All', style: { background: 'var(--da-brand-dark)', color: '#fff' } },
-    { label: 'Checked In', style: { background: 'transparent', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
-    { label: 'Upcoming', style: { background: 'transparent', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
-    { label: 'Awaiting Proof', style: { background: 'transparent', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
-  ];
+  const [activeFilter, setActiveFilter] = useState<AdminReservationFilter>('all');
+  const [reservations, setReservations] = useState<AdminReservationSummary[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const reservations = [
-    { ref: 'RES-8921', initials: 'JD', customer: 'John Doe', workspace: 'Skypod 05', schedule: 'Aug 27, 09:00 - 17:00', payment: 'Paid', paymentColor: 'var(--da-success)', mark: '✓', status: 'Checked In', statusStyle: { background: 'var(--da-info)', color: 'var(--da-brand-dark)' } },
-    { ref: 'RES-8922', initials: 'AS', customer: 'Alice Smith', workspace: 'Lounge 02', schedule: 'Aug 27, 09:00 - 12:00', payment: 'Pending', paymentColor: 'var(--da-text-secondary)', mark: '!', status: 'Awaiting Proof', statusStyle: { background: 'var(--da-soft)', color: 'var(--da-brand-dark)' } },
-    { ref: 'RES-8923', initials: 'MJ', customer: 'Mike Johnson', workspace: 'Office 12', schedule: 'Aug 27, 13:00 - 17:00', payment: 'Review', paymentColor: 'var(--da-attention)', mark: '⧖', status: 'Payment Review', statusStyle: { background: '#FFF8E8', color: 'var(--da-brand-dark)' } },
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadReservations() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`/api/admin/reservations?filter=${activeFilter}`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load reservations (${response.status})`);
+        }
+        const data = await response.json();
+        if (!isCancelled) {
+          setReservations(data.reservations ?? []);
+          setTotalCount(data.total ?? 0);
+        }
+      } catch (err: any) {
+        if (!isCancelled) {
+          setError(err?.message ?? 'Failed to load reservations');
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadReservations();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeFilter]);
+
+  const resFilters: Array<{ label: string; filter: AdminReservationFilter }> = [
+    { label: 'All', filter: 'all' },
+    { label: 'Checked In', filter: 'checked_in' },
+    { label: 'Upcoming', filter: 'upcoming' },
+    { label: 'Awaiting Proof', filter: 'awaiting_proof' },
   ];
 
   const pages = [
     { label: '1', style: { background: 'var(--da-brand-dark)', color: '#fff', border: 'none' } },
-    { label: '2', style: { background: '#fff', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
-    { label: '3', style: { background: '#fff', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
-    { label: 'Next', style: { background: '#fff', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' } },
   ];
 
   return (
@@ -44,39 +77,71 @@ export function ReservationList() {
       <div style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '14px', boxShadow: 'var(--da-shadow-sm)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 20px', borderBottom: '1px solid var(--da-border-light)', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-            <span style={{ fontSize: '19px', fontWeight: 800, color: 'var(--da-brand-dark)' }}>30</span>
+            <span style={{ fontSize: '19px', fontWeight: 800, color: 'var(--da-brand-dark)' }}>{totalCount}</span>
             <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>reservations</span>
           </div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {resFilters.map((f, i) => (
-              <button key={i} style={{ padding: '7px 14px', borderRadius: '9999px', whiteSpace: 'nowrap', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--da-font-family)', ...f.style }}>{f.label}</button>
-            ))}
+            {resFilters.map((f, i) => {
+              const isActive = activeFilter === f.filter;
+              const filterStyle = isActive
+                ? { background: 'var(--da-brand-dark)', color: '#fff', border: 'none' }
+                : { background: 'transparent', color: 'var(--da-text-secondary)', border: '1px solid var(--da-border)' };
+              return (
+                <button
+                  key={i}
+                  onClick={() => setActiveFilter(f.filter)}
+                  style={{ padding: '7px 14px', borderRadius: '9999px', whiteSpace: 'nowrap', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--da-font-family)', ...filterStyle }}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 1.1fr 1.4fr .9fr 1.1fr .5fr', padding: '11px 20px', background: '#F1F8F3', fontSize: '10px', fontWeight: 800, color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', letterSpacing: '.06em' }}>
           <span>REFERENCE ⇅</span><span>CUSTOMER ⇅</span><span>WORKSPACE</span><span>SCHEDULE ⇅</span><span>PAYMENT</span><span>STATUS</span><span style={{ textAlign: 'right' }}>ACTIONS</span>
         </div>
-        
-        {reservations.map((r, i) => (
-          <div key={i} onClick={() => router.push(`/manage/reservations/${r.ref}`)} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 1.1fr 1.4fr .9fr 1.1fr .5fr', padding: '13px 20px', borderTop: '1px solid var(--da-border-light)', fontSize: '12px', color: 'var(--da-text-primary)', fontFamily: 'var(--da-font-family)', cursor: 'pointer', alignItems: 'center' }}>
-            <span style={{ fontWeight: 800, color: 'var(--da-brand-dark)' }}>{r.ref}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--da-canvas)', color: 'var(--da-text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800, flexShrink: 0 }}>{r.initials}</div>
-              <span style={{ fontWeight: 600 }}>{r.customer}</span>
-            </div>
-            <span>{r.workspace}</span>
-            <span style={{ color: 'var(--da-text-primary)' }}>{r.schedule}</span>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: r.paymentColor }}>{r.payment}</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: 800, padding: '4px 9px', borderRadius: '9999px', whiteSpace: 'nowrap', width: 'fit-content', ...r.statusStyle }}>
-              <span aria-hidden="true" style={{ fontSize: '10px', lineHeight: 1 }}>{r.mark}</span>{r.status}
-            </span>
-            <span style={{ textAlign: 'right', color: 'var(--da-text-secondary)', fontWeight: 800, letterSpacing: '1px' }}>⋯</span>
+
+        {loading && reservations.length === 0 ? (
+          <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--da-text-secondary)', fontSize: '13px', fontFamily: 'var(--da-font-family)' }}>
+            Loading reservations...
           </div>
-        ))}
+        ) : error ? (
+          <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--da-danger)', fontSize: '13px', fontFamily: 'var(--da-font-family)' }}>
+            {error}
+          </div>
+        ) : reservations.length === 0 ? (
+          <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--da-text-secondary)', fontSize: '13px', fontFamily: 'var(--da-font-family)' }}>
+            No reservations found.
+          </div>
+        ) : (
+          reservations.map((r, i) => (
+            <div
+              key={r.id || i}
+              onClick={() => router.push(`/manage/reservations/${r.referenceCode}`)}
+              style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.4fr 1.1fr 1.4fr .9fr 1.1fr .5fr', padding: '13px 20px', borderTop: '1px solid var(--da-border-light)', fontSize: '12px', color: 'var(--da-text-primary)', fontFamily: 'var(--da-font-family)', cursor: 'pointer', alignItems: 'center' }}
+            >
+              <span style={{ fontWeight: 800, color: 'var(--da-brand-dark)' }}>{r.referenceCode}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--da-canvas)', color: 'var(--da-text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800, flexShrink: 0 }}>{r.customerInitials}</div>
+                <span style={{ fontWeight: 600 }}>{r.customerName}</span>
+              </div>
+              <span>{r.workspaceDisplayName}</span>
+              <span style={{ color: 'var(--da-text-primary)' }}>{r.schedule}</span>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: r.paymentColor }}>{r.paymentStatus}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: 800, padding: '4px 9px', borderRadius: '9999px', whiteSpace: 'nowrap', width: 'fit-content', ...r.statusStyle }}>
+                <span aria-hidden="true" style={{ fontSize: '10px', lineHeight: 1 }}>{r.mark}</span>{r.status}
+              </span>
+              <span style={{ textAlign: 'right', color: 'var(--da-text-secondary)', fontWeight: 800, letterSpacing: '1px' }}>⋯</span>
+            </div>
+          ))
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 20px', borderTop: '1px solid var(--da-border-light)', flexWrap: 'wrap', gap: '10px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>Showing 1 to 3 of 30 entries</span>
+          <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>
+            Showing {reservations.length > 0 ? 1 : 0} to {reservations.length} of {totalCount} entries
+          </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             {pages.map((pg, i) => (
               <button key={i} style={{ width: pg.label === 'Next' ? 'auto' : '36px', height: '36px', padding: pg.label === 'Next' ? '0 12px' : 0, borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'var(--da-font-family)', ...pg.style }}>{pg.label}</button>

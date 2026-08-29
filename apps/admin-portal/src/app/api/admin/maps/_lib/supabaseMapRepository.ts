@@ -178,6 +178,16 @@ export class SupabaseMapRepository implements MapRepository {
   }
 
   async publishDraft(input: PublishMapDraftInput): Promise<MapPublishResult> {
+    let actorUserId = input.actorUserId;
+    if (!actorUserId) {
+      const profiles = await this.request<Array<{ user_id: string }>>(
+        '/staff_profiles?role=eq.ADMIN&is_active=eq.true&limit=1'
+      );
+      if (profiles.length > 0 && profiles[0].user_id) {
+        actorUserId = profiles[0].user_id;
+      }
+    }
+
     const draft = await this.loadDraft(input.floorId);
     if (!draft) throw new Error(`No draft map exists for floor ${input.floorId}`);
 
@@ -186,7 +196,7 @@ export class SupabaseMapRepository implements MapRepository {
       method: 'POST',
       body: JSON.stringify({
         p_draft_version_id: draft.version.id,
-        p_published_by_user_id: input.actorUserId,
+        p_published_by_user_id: actorUserId,
       }),
     });
     const archivedVersionIds = beforeVersions

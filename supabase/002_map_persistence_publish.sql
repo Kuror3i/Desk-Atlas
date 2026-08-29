@@ -28,9 +28,9 @@ BEGIN
   WHERE user_id = p_published_by_user_id
   FOR UPDATE;
 
-  --IF v_actor_role IS DISTINCT FROM 'ADMIN' OR v_actor_active IS DISTINCT FROM true THEN
-  --  RAISE EXCEPTION 'Only an active ADMIN may publish a map version';
-  --END IF;
+  IF v_actor_role IS DISTINCT FROM 'ADMIN' OR v_actor_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Only an active ADMIN may publish a map version';
+  END IF;
 
   SELECT *
     INTO v_draft

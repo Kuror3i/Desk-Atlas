@@ -1,18 +1,68 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { AdminReservationDetail as AdminReservationDetailType } from '@deskatlas/domain';
 
 export function ReservationDetail({ id }: { id: string }) {
   const router = useRouter();
-  
-  const detailFields = [
-    { label: 'Customer Name', value: 'John Doe' },
-    { label: 'Email', value: 'john.doe@example.com' },
-    { label: 'Schedule', value: 'Aug 27, 09:00 - 17:00' },
-    { label: 'Duration', value: '8 hours' },
-    { label: 'Payment Status', value: 'Confirmed (₱1,200)' },
-  ];
+  const [detail, setDetail] = useState<AdminReservationDetailType | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadDetail() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`/api/admin/reservations/${encodeURIComponent(id)}`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(`Reservation ${id} not found.`);
+          }
+          throw new Error(`Failed to load reservation (${response.status})`);
+        }
+        const data = await response.json();
+        if (!isCancelled) {
+          setDetail(data);
+        }
+      } catch (err: any) {
+        if (!isCancelled) {
+          setError(err?.message ?? 'Failed to load reservation detail');
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadDetail();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [id]);
+
+  const detailFields = detail
+    ? [
+        { label: 'Customer Name', value: detail.customerName },
+        { label: 'Email', value: detail.customerEmail },
+        { label: 'Schedule', value: detail.schedule },
+        { label: 'Duration', value: detail.duration },
+        { label: 'Payment Status', value: detail.paymentStatus },
+      ]
+    : [
+        { label: 'Customer Name', value: '...' },
+        { label: 'Email', value: '...' },
+        { label: 'Schedule', value: '...' },
+        { label: 'Duration', value: '...' },
+        { label: 'Payment Status', value: '...' },
+      ];
 
   const detailActions = [
     { label: 'Reschedule', style: { background: 'transparent', color: 'var(--da-text-primary)', border: '1px solid var(--da-border)' } },
@@ -20,25 +70,47 @@ export function ReservationDetail({ id }: { id: string }) {
     { label: 'View QR Code', style: { background: 'var(--da-brand-dark)', color: '#fff', border: 'none' } },
   ];
 
-  const detailCandidates = [
-    { tier: 'MAIN', name: 'Skypod 05', color: 'var(--da-brand-dark)' },
-    { tier: 'ALTERNATIVE 1', name: 'Skypod 02', color: 'var(--da-text-secondary)' },
-  ];
+  const detailCandidates = detail?.candidates && detail.candidates.length > 0
+    ? detail.candidates.map((c) => ({
+        tier: c.tier + (c.isAssigned ? ' • ALLOCATED' : ''),
+        name: c.workspaceDisplayName || c.workspaceInstanceCode || 'Spot',
+        color: c.isAssigned ? 'var(--da-brand-dark)' : c.color,
+      }))
+    : [];
 
-  const detailTimeline = [
-    'Aug 26, 14:22 - Reservation requested',
-    'Aug 26, 14:25 - Payment proof uploaded',
-    'Aug 26, 15:00 - Payment approved & Allocated to Skypod 05',
-    'Aug 27, 08:55 - Customer checked in at Kiosk',
-  ];
+  const detailTimeline = detail?.timeline && detail.timeline.length > 0
+    ? detail.timeline
+    : ['Reservation recorded'];
+
+  if (loading) {
+    return (
+      <main data-screen-label="Reservation Detail" style={{ padding: '26px 28px 40px' }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/reservations'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Reservations</a>
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--da-text-secondary)', fontSize: '13px', fontFamily: 'var(--da-font-family)' }}>
+          Loading reservation details...
+        </div>
+      </main>
+    );
+  }
+
+  if (error || !detail) {
+    return (
+      <main data-screen-label="Reservation Detail" style={{ padding: '26px 28px 40px' }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/reservations'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Reservations</a>
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--da-danger)', fontSize: '13px', fontFamily: 'var(--da-font-family)' }}>
+          {error ?? 'Reservation not found.'}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main data-screen-label="Reservation Detail" style={{ padding: '26px 28px 40px' }}>
       <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/reservations'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Reservations</a>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '14px 0 20px', flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: 0, letterSpacing: '-0.02em' }}>{id}</h1>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: 800, padding: '4px 10px', borderRadius: '9999px', whiteSpace: 'nowrap', background: 'var(--da-info)', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)' }}>
-          <span aria-hidden="true" style={{ fontSize: '10px', lineHeight: 1 }}>✓</span>Confirmed
+        <h1 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: 0, letterSpacing: '-0.02em' }}>{detail.referenceCode}</h1>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '10px', fontWeight: 800, padding: '4px 10px', borderRadius: '9999px', whiteSpace: 'nowrap', fontFamily: 'var(--da-font-family)', ...detail.statusStyle }}>
+          <span aria-hidden="true" style={{ fontSize: '10px', lineHeight: 1 }}>{detail.mark}</span>{detail.status}
         </span>
       </div>
       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>

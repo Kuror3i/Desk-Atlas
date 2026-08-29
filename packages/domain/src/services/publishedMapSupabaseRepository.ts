@@ -276,6 +276,8 @@ function sanitizeStyle(
     'strokeColor',
     'textColor',
     'opacity',
+    'icon',
+    'amenityType',
   ]);
   const sanitized: Record<string, string | number | boolean | null> = {};
 

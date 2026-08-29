@@ -42,6 +42,10 @@ export interface ReservationCandidate {
   startAt: string;
   endAt: string;
   isAssigned: boolean;
+  workspaceDisplayName?: string;
+  workspaceInstanceCode?: string;
+  workspaceTemplateName?: string;
+  floorName?: string;
 }
 
 export interface CandidateSubmissionDTO {
@@ -334,3 +338,85 @@ export interface GuestReservationTrackingResult {
   completedAt: string | null;
   finalAssignment: GuestReservationAssignmentSummary | null;
 }
+
+export type AdminReservationFilter = "all" | "checked_in" | "upcoming" | "awaiting_proof";
+
+export interface AdminReservationSummary {
+  id: string;
+  referenceCode: string;
+  source: ReservationSource;
+  customerFirstName: string;
+  customerLastName: string;
+  customerName: string;
+  customerInitials: string;
+  customerEmail: string;
+  workspaceDisplayName: string;
+  workspaceInstanceCode?: string | null;
+  workspaceTemplateName?: string | null;
+  floorName?: string | null;
+  schedule: string;
+  startAt?: string | null;
+  endAt?: string | null;
+  paymentStatus: string;
+  paymentColor: string;
+  reservationStatus: ReservationStatus;
+  status: string;
+  statusStyle: { background: string; color: string };
+  mark: string;
+  amountDue: number;
+  currency: string;
+  createdAt: string;
+  confirmedAt?: string | null;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
+}
+
+export interface AdminReservationCandidateSummary {
+  id?: string;
+  rank: CandidateRank;
+  tier: string;
+  workspaceInstanceId: string;
+  workspaceDisplayName: string;
+  workspaceInstanceCode?: string | null;
+  workspaceTemplateName?: string | null;
+  floorName?: string | null;
+  startAt: string;
+  endAt: string;
+  schedule: string;
+  isAssigned: boolean;
+  color: string;
+}
+
+export interface AdminReservationDetail {
+  id: string;
+  referenceCode: string;
+  source: ReservationSource;
+  customerFirstName: string;
+  customerLastName: string;
+  customerName: string;
+  customerInitials: string;
+  customerEmail: string;
+  reservationStatus: ReservationStatus;
+  status: string;
+  statusStyle: { background: string; color: string };
+  mark: string;
+  schedule: string;
+  duration: string;
+  paymentStatus: string;
+  paymentColor: string;
+  amountDue: number;
+  currency: string;
+  rateSnapshot: number;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string | null;
+  checkedInAt?: string | null;
+  checkedOutAt?: string | null;
+  qrIssuedAt?: string | null;
+  qrRevokedAt?: string | null;
+  hasBookingQr: boolean;
+  assignedCandidate: AdminReservationCandidateSummary | null;
+  candidates: AdminReservationCandidateSummary[];
+  timeline: string[];
+}
+

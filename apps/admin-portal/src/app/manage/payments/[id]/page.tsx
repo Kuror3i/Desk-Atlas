@@ -1,5 +1,10 @@
 import { PaymentReview } from '@/features/payments';
 
-export default function PaymentReviewPage({ params }: { params: { id: string } }) {
-  return <PaymentReview id={params.id} />;
+export default async function PaymentReviewPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  return <PaymentReview id={id} />;
 }

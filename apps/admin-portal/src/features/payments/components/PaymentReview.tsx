@@ -1,31 +1,147 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/features/auth';
+import type {
+  PaymentReviewDetail,
+  PaymentReviewDecisionResult,
+} from '@deskatlas/domain';
+
+function formatTimeAgo(dateStr: string | null): string {
+  if (!dateStr) return 'just now';
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  if (diffMs < 0 || isNaN(diffMs)) return 'just now';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins === 1) return '1 min ago';
+  if (mins < 60) return `${mins} mins ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours === 1) return '1 hour ago';
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+function formatScheduleRange(startIso?: string, endIso?: string): string {
+  if (!startIso || !endIso) return 'Schedule not specified';
+  try {
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    const dateFormatted = start.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    const startTime = start.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const endTime = end.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    return `${dateFormatted}, ${startTime} - ${endTime}`;
+  } catch {
+    return `${startIso} - ${endIso}`;
+  }
+}
 
 export function PaymentReview({ id }: { id: string }) {
   const router = useRouter();
+  const { user } = useAuth();
+
+  const [detail, setDetail] = useState<PaymentReviewDetail | null>(null);
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingProof, setLoadingProof] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const [showApproveModal, setShowApproveModal] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [isApproveSuccess, setIsApproveSuccess] = useState(false);
+  const [approveResult, setApproveResult] = useState<PaymentReviewDecisionResult | null>(null);
+
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [isRejecting, setIsRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const reviewFields = [
-    { label: 'Customer', value: 'Mike Johnson' },
-    { label: 'Reference', value: id },
-    { label: 'Amount', value: '₱1,200' },
-    { label: 'Date/Time', value: 'Aug 27, 2026, 13:00 - 17:00' },
-    { label: 'Submitted', value: '5 mins ago' },
-  ];
+  const fetchDetail = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/admin/payments/reviews/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        throw new Error(`Failed to load payment review detail (${res.status})`);
+      }
+      const data: PaymentReviewDetail = await res.json();
+      setDetail(data);
 
-  const reviewCandidates = [
-    { tier: 'MAIN', name: 'Office 12', color: 'var(--da-brand-dark)' },
-    { tier: 'ALTERNATIVE 1', name: 'Office 10', color: 'var(--da-text-secondary)' },
-    { tier: 'ALTERNATIVE 2', name: 'Skypod 01', color: 'var(--da-text-secondary)' },
-  ];
+      if (data.proofStoragePath) {
+        fetchProofUrl();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load payment details.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const confirmApprove = () => {
-    setIsApproveSuccess(true);
+  const fetchProofUrl = async () => {
+    try {
+      setLoadingProof(true);
+      const res = await fetch(`/api/admin/payments/reviews/${encodeURIComponent(id)}/proof`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.signedUrl) {
+          setProofUrl(data.signedUrl);
+        }
+      }
+    } catch {
+      // ignore proof load error
+    } finally {
+      setLoadingProof(false);
+    }
+  };
+
+  useEffect(() => {
+    if (id) {
+      fetchDetail();
+    }
+  }, [id]);
+
+  const confirmApprove = async () => {
+    if (!detail) return;
+    setIsApproving(true);
+    setActionError(null);
+
+    try {
+      const res = await fetch(`/api/admin/payments/reviews/${encodeURIComponent(detail.paymentAttemptId)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision: 'APPROVE',
+          actorUserId: user?.id,
+          actorRole: 'ADMIN',
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to approve payment.');
+      }
+
+      setApproveResult(data);
+      setIsApproveSuccess(true);
+    } catch (err: any) {
+      setActionError(err.message || 'Error approving payment.');
+    } finally {
+      setIsApproving(false);
+    }
   };
 
   const closeApprove = () => {
@@ -35,6 +151,92 @@ export function PaymentReview({ id }: { id: string }) {
     }
   };
 
+  const confirmReject = async () => {
+    if (!detail) return;
+    if (!rejectReason.trim()) {
+      setActionError('Please provide a rejection reason.');
+      return;
+    }
+
+    setIsRejecting(true);
+    setActionError(null);
+
+    try {
+      const res = await fetch(`/api/admin/payments/reviews/${encodeURIComponent(detail.paymentAttemptId)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision: 'REJECT',
+          rejectionReason: rejectReason.trim(),
+          actorUserId: user?.id,
+          actorRole: 'ADMIN',
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to reject payment.');
+      }
+
+      setShowRejectModal(false);
+      router.push('/manage/payments');
+    } catch (err: any) {
+      setActionError(err.message || 'Error rejecting payment.');
+    } finally {
+      setIsRejecting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <main data-screen-label="Payment Review" style={{ padding: '26px 28px 40px' }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/payments'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Payments</a>
+        <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--da-text-secondary)', fontSize: '14px', fontFamily: 'var(--da-font-family)' }}>
+          Loading payment review details...
+        </div>
+      </main>
+    );
+  }
+
+  if (error || !detail) {
+    return (
+      <main data-screen-label="Payment Review" style={{ padding: '26px 28px 40px' }}>
+        <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/payments'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Payments</a>
+        <h1 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '14px 0 3px', letterSpacing: '-0.02em' }}>Payment Review</h1>
+        <div style={{ background: '#FEE2E2', border: '1px solid #EF4444', borderRadius: '12px', padding: '16px 20px', color: '#991B1B', fontSize: '13px', margin: '20px 0' }}>
+          {error || 'Payment review item was not found.'}
+        </div>
+        <button onClick={() => router.push('/manage/payments')} style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Return to Queue</button>
+      </main>
+    );
+  }
+
+  const customerName = `${detail.customerFirstName} ${detail.customerLastName}`.trim();
+  const formattedAmount = `₱${Number(detail.amountDue).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  const submittedAgo = formatTimeAgo(detail.proofSubmittedAt);
+  const primaryCandidate = detail.submittedCandidates?.[0];
+  const scheduleDisplay = primaryCandidate
+    ? formatScheduleRange(primaryCandidate.startAt, primaryCandidate.endAt)
+    : 'Not scheduled';
+
+  const reviewFields = [
+    { label: 'Customer', value: customerName },
+    { label: 'Email', value: detail.customerEmail },
+    { label: 'Reference', value: detail.reservationReferenceCode || detail.paymentAttemptId.slice(0, 8) },
+    { label: 'Amount', value: formattedAmount },
+    { label: 'Date/Time', value: scheduleDisplay },
+    { label: 'Submitted', value: submittedAgo },
+    { label: 'Status', value: detail.paymentStatus },
+  ];
+
+  const assignedCandidateFromDetail = approveResult?.assignedCandidateRank !== null && approveResult?.assignedCandidateRank !== undefined
+    ? detail.submittedCandidates?.find((c) => c.rank === approveResult.assignedCandidateRank)
+    : null;
+
+  const assignedWorkspaceName = assignedCandidateFromDetail?.workspaceDisplayName
+    || assignedCandidateFromDetail?.workspaceInstanceCode
+    || 'Workspace';
+
   return (
     <main data-screen-label="Payment Review" style={{ padding: '26px 28px 40px' }}>
       <a href="#" onClick={(e) => { e.preventDefault(); router.push('/manage/payments'); }} style={{ fontSize: '12px', color: 'var(--da-brand-dark)', fontFamily: 'var(--da-font-family)', fontWeight: 700 }}>&larr; Back to Payments</a>
@@ -43,7 +245,19 @@ export function PaymentReview({ id }: { id: string }) {
       
       <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
         <div style={{ flex: 1.2, minWidth: '300px', background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '20px' }}>
-          <div style={{ width: '100%', height: '280px', background: 'var(--da-canvas)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--da-text-secondary)', fontSize: '12px', fontFamily: 'var(--da-font-family)', marginBottom: '16px' }}>Large proof preview</div>
+          <div style={{ width: '100%', height: '280px', background: 'var(--da-canvas)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--da-text-secondary)', fontSize: '12px', fontFamily: 'var(--da-font-family)', marginBottom: '16px', overflow: 'hidden' }}>
+            {proofUrl ? (
+              <img
+                src={proofUrl}
+                alt="Payment proof submission"
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : loadingProof ? (
+              <span>Loading proof preview...</span>
+            ) : (
+              <span>No proof image available</span>
+            )}
+          </div>
           {reviewFields.map((f, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid var(--da-border-light)', fontSize: '13px' }}>
               <span style={{ color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>{f.label}</span>
@@ -54,16 +268,42 @@ export function PaymentReview({ id }: { id: string }) {
         
         <div style={{ flex: 1, minWidth: '260px', background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '20px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--da-text-primary)', margin: '0 0 12px' }}>Reservation Candidates</h3>
-          {reviewCandidates.map((c, i) => (
-            <div key={i} style={{ borderLeft: `3px solid ${c.color}`, padding: '8px 10px', marginBottom: '8px', background: '#F1F8F3', borderRadius: '6px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 800, color: c.color, fontFamily: 'var(--da-font-family)' }}>{c.tier}</div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-text-primary)' }}>{c.name}</div>
+          {detail.submittedCandidates && detail.submittedCandidates.length > 0 ? (
+            detail.submittedCandidates.map((c, i) => {
+              const tierLabel = c.rank === 0 ? 'MAIN' : c.rank === 1 ? 'ALTERNATIVE 1' : 'ALTERNATIVE 2';
+              const tierColor = c.rank === 0 ? 'var(--da-brand-dark)' : 'var(--da-text-secondary)';
+              const candidateName = c.workspaceDisplayName || c.workspaceInstanceCode || `Spot #${i + 1}`;
+              const candidateSubtext = [c.workspaceTemplateName, c.floorName].filter(Boolean).join(' · ');
+
+              return (
+                <div key={i} style={{ borderLeft: `3px solid ${tierColor}`, padding: '8px 10px', marginBottom: '8px', background: '#F1F8F3', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 800, color: tierColor, fontFamily: 'var(--da-font-family)' }}>{tierLabel}</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-text-primary)' }}>{candidateName}</div>
+                  {candidateSubtext && (
+                    <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>{candidateSubtext}</div>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ color: 'var(--da-text-secondary)', fontSize: '12px', fontFamily: 'var(--da-font-family)' }}>No candidate workspaces recorded.</div>
+          )}
+
+          {detail.paymentStatus === 'UNDER_REVIEW' ? (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
+              <button onClick={() => { setActionError(null); setShowRejectModal(true); }} style={{ flex: 1, background: '#fff', border: '1px solid var(--da-brand-dark)', color: 'var(--da-brand-dark)', padding: '11px', borderRadius: '9px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Reject Payment</button>
+              <button onClick={() => { setActionError(null); setShowApproveModal(true); }} style={{ flex: 1, background: 'linear-gradient(0deg, var(--da-brand-dark) 70%, #154A32)', color: '#fff', border: 'none', padding: '11px', borderRadius: '9px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Approve Payment</button>
             </div>
-          ))}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-            <button onClick={() => setShowRejectModal(true)} style={{ flex: 1, background: '#fff', border: '1px solid var(--da-brand-dark)', color: 'var(--da-brand-dark)', padding: '11px', borderRadius: '9px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Reject Payment</button>
-            <button onClick={() => setShowApproveModal(true)} style={{ flex: 1, background: 'linear-gradient(0deg, var(--da-brand-dark) 70%, #154A32)', color: '#fff', border: 'none', padding: '11px', borderRadius: '9px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Approve Payment</button>
-          </div>
+          ) : detail.paymentStatus === 'APPROVED' ? (
+            <div style={{ marginTop: '20px', padding: '12px', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', color: '#166534', fontSize: '13px', fontWeight: 700, textAlign: 'center' }}>
+              Payment is APPROVED
+            </div>
+          ) : (
+            <div style={{ marginTop: '20px', padding: '12px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', color: '#991B1B', fontSize: '13px', textAlign: 'center' }}>
+              <strong>Payment is {detail.paymentStatus}</strong>
+              {detail.rejectionReason && <div style={{ fontSize: '12px', marginTop: '4px' }}>Reason: {detail.rejectionReason}</div>}
+            </div>
+          )}
         </div>
       </div>
 
@@ -74,18 +314,32 @@ export function PaymentReview({ id }: { id: string }) {
               <>
                 <h3 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 10px' }}>Approve payment?</h3>
                 <p style={{ fontSize: '13px', color: 'var(--da-text-primary)', lineHeight: 1.5, margin: '0 0 14px' }}>DeskAtlas will check Main &rarr; Alternative 1 &rarr; Alternative 2 against current availability.</p>
+                {actionError && (
+                  <div style={{ background: '#FEE2E2', border: '1px solid #EF4444', borderRadius: '8px', padding: '8px 12px', color: '#991B1B', fontSize: '12px', marginBottom: '12px' }}>
+                    {actionError}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  <button onClick={closeApprove} style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={confirmApprove} style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>Approve & Allocate</button>
+                  <button onClick={closeApprove} disabled={isApproving} style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={confirmApprove} disabled={isApproving} style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: isApproving ? 0.7 : 1 }}>{isApproving ? 'Approving...' : 'Approve & Allocate'}</button>
                 </div>
               </>
             ) : (
               <div style={{ textAlign: 'center' }}>
                 <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--da-info)', color: 'var(--da-brand-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', margin: '0 auto 12px' }}>✓</div>
                 <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 8px' }}>Payment approved</h3>
-                <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: '0 0 4px', fontFamily: 'var(--da-font-family)' }}>Assigned workspace</p>
-                <p style={{ fontSize: '15px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 14px' }}>Office 12</p>
-                <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: '0 0 16px' }}>Booking QR created.</p>
+                {approveResult?.reservationStatus === 'CONFIRMED' ? (
+                  <>
+                    <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: '0 0 4px', fontFamily: 'var(--da-font-family)' }}>Assigned workspace</p>
+                    <p style={{ fontSize: '15px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 14px' }}>{assignedWorkspaceName}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: '0 0 16px' }}>Booking QR created.</p>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-warning-dark, #B45309)', margin: '0 0 8px' }}>Needs Manual Resolution</p>
+                    <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: '0 0 16px' }}>All candidates were unavailable. Follow up with guest.</p>
+                  </>
+                )}
                 <button onClick={closeApprove} style={{ width: '100%', background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '11px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Done</button>
               </div>
             )}
@@ -99,9 +353,14 @@ export function PaymentReview({ id }: { id: string }) {
             <h3 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 14px' }}>Reject Payment</h3>
             <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--da-text-primary)', fontFamily: 'var(--da-font-family)' }}>Reason</label>
             <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '10px', fontSize: '13px', margin: '6px 0 16px', minHeight: '70px', fontFamily: 'var(--da-font-family)' }} placeholder="Explain why this payment is rejected"></textarea>
+            {actionError && (
+              <div style={{ background: '#FEE2E2', border: '1px solid #EF4444', borderRadius: '8px', padding: '8px 12px', color: '#991B1B', fontSize: '12px', marginBottom: '12px' }}>
+                {actionError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowRejectModal(false)} style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => { setShowRejectModal(false); router.push('/manage/payments'); }} style={{ background: 'var(--da-danger)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>Reject Payment</button>
+              <button onClick={() => setShowRejectModal(false)} disabled={isRejecting} style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={confirmReject} disabled={isRejecting || !rejectReason.trim()} style={{ background: 'var(--da-danger)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: isRejecting || !rejectReason.trim() ? 0.7 : 1 }}>{isRejecting ? 'Rejecting...' : 'Reject Payment'}</button>
             </div>
           </div>
         </div>

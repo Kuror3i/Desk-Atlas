@@ -70,10 +70,39 @@ export interface ReportPaymentAttemptRecord {
   processedAt: string | null;
 }
 
+export type AdminReportRange = "today" | "7days" | "30days" | "month" | "year";
+
 export interface AdminReportMetric {
   label: string;
   value: string;
   rawValue: number;
+  trend?: string;
+  positive?: boolean;
+}
+
+export interface AdminRevenueOverviewBar {
+  label: string;
+  date: string;
+  amount: number;
+  formattedAmount: string;
+  heightPercentage: number;
+}
+
+export interface AdminRevenueOverview {
+  totalAmount: number;
+  formattedTotalAmount: string;
+  currency: string;
+  bars: AdminRevenueOverviewBar[];
+}
+
+export interface AdminTopWorkspaceSummary {
+  id: string;
+  name: string;
+  templateName: string;
+  floorName: string;
+  reservationCount: number;
+  bookedHours: number;
+  occupancyPercentage: number;
 }
 
 export interface AdminReportCategorySummary {
@@ -100,7 +129,11 @@ export interface AdminFrequentBookerSummary {
 }
 
 export interface AdminReportsSnapshot {
+  range: AdminReportRange;
+  rangeLabel: string;
   summaryMetrics: AdminReportMetric[];
+  revenueOverview: AdminRevenueOverview;
+  topWorkspaces: AdminTopWorkspaceSummary[];
   reportCategories: AdminReportCategorySummary[];
   recentReports: AdminRecentReportSummary[];
   topUsers: AdminFrequentBookerSummary[];

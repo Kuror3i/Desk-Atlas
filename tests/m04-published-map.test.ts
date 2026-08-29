@@ -187,6 +187,70 @@ async function main() {
     },
     'empty published-map repositories should return a stable not-found error'
   );
+
+  // Amenity published map verification
+  const amenityMapRepo = new InMemoryPublishedMapRepository();
+  amenityMapRepo.seedPublishedFloorMap(
+    createPublishedFloorMap('floor-amenities', 'Amenities Floor', 1, {
+      elements: [
+        {
+          id: 'amenity-restroom',
+          elementRole: 'AMENITY',
+          elementType: 'restroom',
+          x: 100,
+          y: 100,
+          width: 100,
+          height: 80,
+          rotation: 0,
+          zIndex: 1,
+          label: 'Restroom',
+          style: { color: '#E0F2FE', icon: 'restroom' },
+          workspace: null,
+        },
+        {
+          id: 'amenity-pantry',
+          elementRole: 'AMENITY',
+          elementType: 'pantry',
+          x: 220,
+          y: 100,
+          width: 100,
+          height: 80,
+          rotation: 0,
+          zIndex: 2,
+          label: 'Pantry',
+          style: { color: '#FEF3C7', icon: 'pantry' },
+          workspace: null,
+        },
+        {
+          id: 'amenity-exit',
+          elementRole: 'AMENITY',
+          elementType: 'emergency_exit',
+          x: 340,
+          y: 100,
+          width: 100,
+          height: 80,
+          rotation: 0,
+          zIndex: 3,
+          label: 'Emergency Exit',
+          style: { color: '#DCFCE7', icon: 'emergency_exit' },
+          workspace: null,
+        },
+      ],
+    })
+  );
+
+  const amenityMapService = createPublishedMapService(amenityMapRepo);
+  const loadedAmenityMap = await amenityMapService.loadPublishedFloorMap('floor-amenities');
+  assert.equal(loadedAmenityMap.elements.length, 3);
+  assert.equal(loadedAmenityMap.elements[0].elementRole, 'AMENITY');
+  assert.equal(loadedAmenityMap.elements[0].workspace, null);
+  assert.equal(loadedAmenityMap.elements[0].style.color, '#E0F2FE');
+  assert.equal(loadedAmenityMap.elements[1].elementRole, 'AMENITY');
+  assert.equal(loadedAmenityMap.elements[1].workspace, null);
+  assert.equal(loadedAmenityMap.elements[1].style.color, '#FEF3C7');
+  assert.equal(loadedAmenityMap.elements[2].elementRole, 'AMENITY');
+  assert.equal(loadedAmenityMap.elements[2].workspace, null);
+  assert.equal(loadedAmenityMap.elements[2].style.color, '#DCFCE7');
 }
 
 main().catch((error) => {

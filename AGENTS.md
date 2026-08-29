@@ -18,6 +18,7 @@ Always use `docs/INDEX.md` as part of the operating instructions for:
 - required preflight reading
 - shared ledger updates after every milestone attempt
 - frontend limitation documentation expectations
+- post-FM milestone-fix (`MF-*`) documentation and execution expectations
 
 ## 1. Project Documentation Is Mandatory
 
@@ -71,12 +72,14 @@ Before editing code:
 3. Read `docs/INDEX.md`.
 4. Inspect `/docs`.
 5. Read the five authoritative DeskAtlas documents above.
-6. Identify the exact milestone being requested.
-7. Identify its corresponding PRD feature IDs.
-8. Read the milestone's dependencies and acceptance criteria.
-9. Inspect `git status`.
-10. Inspect the existing implementation related to the feature.
-11. Identify whether the required frontend UI already exists.
+6. If the request is a post-FM fix or references `MF-*`, read
+   `docs/milestone-fixes/INDEX.md` and the matching MF file.
+7. Identify the exact milestone being requested.
+8. Identify its corresponding PRD feature IDs.
+9. Read the milestone's dependencies and acceptance criteria.
+10. Inspect `git status`.
+11. Inspect the existing implementation related to the feature.
+12. Identify whether the required frontend UI already exists.
 
 Do not write code before completing this preflight.
 
@@ -91,6 +94,9 @@ The required lifecycle is:
 `READ → INSPECT → PLAN → IMPLEMENT → TEST → REGRESSION TEST → DIFF AUDIT → REPORT → STOP`
 
 Implement exactly ONE milestone per user request.
+
+This applies to backend milestones (`Mxx`), frontend milestones (`FM-xx`), and
+post-FM fix milestones (`MF-xx`).
 
 Never automatically continue to the next milestone.
 
@@ -119,7 +125,7 @@ milestone passes.
 
 ---
 
-## 6. Frontend Is Frozen
+## 6. Frontend Is Frozen (This is no longer true. See docs/frontend/INDEX.md)
 
 The implementation agent owns:
 

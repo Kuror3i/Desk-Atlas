@@ -3,7 +3,11 @@ import {
   AdminRecentReportSummary,
   AdminReportCategorySummary,
   AdminReportExportType,
+  AdminReportRange,
   AdminReportsSnapshot,
+  AdminRevenueOverview,
+  AdminRevenueOverviewBar,
+  AdminTopWorkspaceSummary,
   ReportPaymentAttemptRecord,
   ReportReservationRecord,
 } from "../models/reports";
@@ -35,39 +39,92 @@ export class ReportsService {
     private readonly nowProvider: () => Date = () => new Date()
   ) {}
 
-  async getAdminReportsSnapshot(): Promise<AdminReportsSnapshot> {
+  async getAdminReportsSnapshot(range: AdminReportRange = "month"): Promise<AdminReportsSnapshot> {
     const now = this.nowProvider();
     const reservations = await this.repository.listReportReservations();
     const payments = await this.repository.listReportPaymentAttempts();
 
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const rangeBounds = calculateReportRangeBounds(now, range);
 
-    const reservationsThisMonth = reservations.filter((reservation) =>
-      isWithinRange(reservation.createdAt, monthStart, nextMonthStart)
+    const currentReservations = reservations.filter((reservation) =>
+      isWithinRange(reservation.createdAt, rangeBounds.currentStart, rangeBounds.currentEnd)
     );
-    const approvedPaymentsThisMonth = payments.filter(
+    const prevReservations = reservations.filter((reservation) =>
+      isWithinRange(reservation.createdAt, rangeBounds.prevStart, rangeBounds.prevEnd)
+    );
+
+    const currentApprovedPayments = payments.filter(
       (attempt) =>
         attempt.paymentStatus === "APPROVED" &&
         attempt.processedAt !== null &&
-        isWithinRange(attempt.processedAt, monthStart, nextMonthStart)
+        isWithinRange(attempt.processedAt, rangeBounds.currentStart, rangeBounds.currentEnd)
     );
+    const prevApprovedPayments = payments.filter(
+      (attempt) =>
+        attempt.paymentStatus === "APPROVED" &&
+        attempt.processedAt !== null &&
+        isWithinRange(attempt.processedAt, rangeBounds.prevStart, rangeBounds.prevEnd)
+    );
+
+    const currentTotalRevenue = currentApprovedPayments.reduce((sum, a) => sum + a.amount, 0);
+    const prevTotalRevenue = prevApprovedPayments.reduce((sum, a) => sum + a.amount, 0);
+    const currency = currentApprovedPayments[0]?.currency ?? payments[0]?.currency ?? "PHP";
+
+    const confirmedCurrent = currentReservations.filter((r) =>
+      ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(r.reservationStatus)
+    );
+    const confirmedPrev = prevReservations.filter((r) =>
+      ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(r.reservationStatus)
+    );
+    const occupancyPctCurrent =
+      currentReservations.length > 0
+        ? Math.round((confirmedCurrent.length / currentReservations.length) * 100)
+        : 0;
+    const occupancyPctPrev =
+      prevReservations.length > 0
+        ? Math.round((confirmedPrev.length / prevReservations.length) * 100)
+        : 0;
+
+    const cancelledCurrent = currentReservations.filter((r) =>
+      ["CANCELLED", "NEEDS_MANUAL_RESOLUTION"].includes(r.reservationStatus)
+    ).length;
+    const cancelledPrev = prevReservations.filter((r) =>
+      ["CANCELLED", "NEEDS_MANUAL_RESOLUTION"].includes(r.reservationStatus)
+    ).length;
 
     const summaryMetrics = [
       {
-        label: "Total Reservations This Month",
-        value: formatInteger(reservationsThisMonth.length),
-        rawValue: reservationsThisMonth.length,
+        label: getReservationsMetricLabel(range),
+        value: formatInteger(currentReservations.length),
+        rawValue: currentReservations.length,
+        trend: `${formatComparisonTrend(currentReservations.length, prevReservations.length)} ${rangeBounds.comparisonLabel}`,
+        positive: currentReservations.length >= prevReservations.length,
       },
       {
-        label: "Total Payments This Month",
-        value: formatCurrency(
-          approvedPaymentsThisMonth.reduce((sum, attempt) => sum + attempt.amount, 0),
-          approvedPaymentsThisMonth[0]?.currency ?? "PHP"
-        ),
-        rawValue: approvedPaymentsThisMonth.reduce((sum, attempt) => sum + attempt.amount, 0),
+        label: getRevenueMetricLabel(range),
+        value: formatCurrency(currentTotalRevenue, currency),
+        rawValue: currentTotalRevenue,
+        trend: `${formatComparisonTrend(currentTotalRevenue, prevTotalRevenue)} ${rangeBounds.comparisonLabel}`,
+        positive: currentTotalRevenue >= prevTotalRevenue,
+      },
+      {
+        label: "Occupancy Rate",
+        value: `${occupancyPctCurrent}%`,
+        rawValue: occupancyPctCurrent,
+        trend: `${occupancyPctCurrent >= occupancyPctPrev ? "+" : ""}${occupancyPctCurrent - occupancyPctPrev}% ${rangeBounds.comparisonLabel}`,
+        positive: occupancyPctCurrent >= occupancyPctPrev,
+      },
+      {
+        label: "No Shows & Cancellations",
+        value: formatInteger(cancelledCurrent),
+        rawValue: cancelledCurrent,
+        trend: `${formatComparisonTrend(cancelledCurrent, cancelledPrev)} ${rangeBounds.comparisonLabel}`,
+        positive: cancelledCurrent <= cancelledPrev,
       },
     ];
+
+    const revenueOverview = buildRevenueOverview(now, payments, currency);
+    const topWorkspaces = buildTopWorkspaces(currentReservations.length > 0 ? currentReservations : reservations);
 
     const reportCategories = REPORT_CATEGORY_DEFINITIONS.map((definition) => ({
       id: definition.id,
@@ -80,10 +137,14 @@ export class ReportsService {
       this.buildRecentReport(definition.exportType, definition.name, index + 1, now)
     );
 
-    const topUsers = buildTopUsers(reservationsThisMonth);
+    const topUsers = buildTopUsers(currentReservations.length > 0 ? currentReservations : reservations);
 
     return {
+      range,
+      rangeLabel: rangeBounds.rangeLabel,
       summaryMetrics,
+      revenueOverview,
+      topWorkspaces,
       reportCategories,
       recentReports,
       topUsers,
@@ -92,19 +153,34 @@ export class ReportsService {
     };
   }
 
-  async exportAdminReport(exportType: AdminReportExportType): Promise<{
+  async exportAdminReport(
+    exportType: AdminReportExportType,
+    range?: AdminReportRange
+  ): Promise<{
     filename: string;
     contentType: string;
     content: string;
   }> {
     const now = this.nowProvider();
-    const reservations = await this.repository.listReportReservations();
-    const payments = await this.repository.listReportPaymentAttempts();
+    let reservations = await this.repository.listReportReservations();
+    let payments = await this.repository.listReportPaymentAttempts();
+
+    if (range) {
+      const rangeBounds = calculateReportRangeBounds(now, range);
+      reservations = reservations.filter((r) =>
+        isWithinRange(r.createdAt, rangeBounds.currentStart, rangeBounds.currentEnd)
+      );
+      payments = payments.filter((p) =>
+        isWithinRange(p.createdAt, rangeBounds.currentStart, rangeBounds.currentEnd)
+      );
+    }
+
     const rows = this.buildExportRows(exportType, reservations, payments);
     const filenameDate = now.toISOString().slice(0, 10);
+    const rangeSuffix = range ? `-${range}` : "";
 
     return {
-      filename: `deskatlas-${exportType}-${filenameDate}.csv`,
+      filename: `deskatlas-${exportType}${rangeSuffix}-${filenameDate}.csv`,
       contentType: "text/csv; charset=utf-8",
       content: toCsv(rows),
     };
@@ -158,6 +234,222 @@ export function createReportsService(
   nowProvider?: () => Date
 ) {
   return new ReportsService(repository, nowProvider);
+}
+
+function calculateReportRangeBounds(now: Date, range: AdminReportRange) {
+  let currentStart: Date;
+  let currentEnd: Date;
+  let prevStart: Date;
+  let prevEnd: Date;
+  let comparisonLabel: string;
+  let rangeLabel: string;
+
+  switch (range) {
+    case "today": {
+      const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+      currentStart = startOfToday;
+      currentEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0));
+      prevStart = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000);
+      prevEnd = startOfToday;
+      comparisonLabel = "vs yesterday";
+      rangeLabel = "Today";
+      break;
+    }
+    case "7days": {
+      currentStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      currentEnd = new Date(now.getTime() + 1000);
+      prevStart = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      prevEnd = currentStart;
+      comparisonLabel = "vs previous 7 days";
+      rangeLabel = "Last 7 Days";
+      break;
+    }
+    case "30days": {
+      currentStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      currentEnd = new Date(now.getTime() + 1000);
+      prevStart = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      prevEnd = currentStart;
+      comparisonLabel = "vs previous 30 days";
+      rangeLabel = "Last 30 Days";
+      break;
+    }
+    case "year": {
+      currentStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+      currentEnd = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
+      prevStart = new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1));
+      prevEnd = currentStart;
+      comparisonLabel = "vs last year";
+      rangeLabel = "This Year";
+      break;
+    }
+    case "month":
+    default: {
+      currentStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      currentEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      prevStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      prevEnd = currentStart;
+      comparisonLabel = "vs last month";
+      rangeLabel = "This Month";
+      break;
+    }
+  }
+
+  return {
+    currentStart,
+    currentEnd,
+    prevStart,
+    prevEnd,
+    comparisonLabel,
+    rangeLabel,
+  };
+}
+
+function getReservationsMetricLabel(range: AdminReportRange): string {
+  switch (range) {
+    case "today":
+      return "Total Reservations Today";
+    case "7days":
+      return "Total Reservations (7 Days)";
+    case "30days":
+      return "Total Reservations (30 Days)";
+    case "year":
+      return "Total Reservations This Year";
+    case "month":
+    default:
+      return "Total Reservations This Month";
+  }
+}
+
+function getRevenueMetricLabel(range: AdminReportRange): string {
+  switch (range) {
+    case "today":
+      return "Total Payments Today";
+    case "7days":
+      return "Total Payments (7 Days)";
+    case "30days":
+      return "Total Payments (30 Days)";
+    case "year":
+      return "Total Payments This Year";
+    case "month":
+    default:
+      return "Total Payments This Month";
+  }
+}
+
+function formatComparisonTrend(current: number, previous: number): string {
+  if (previous === 0) {
+    if (current === 0) return "0%";
+    return "+100%";
+  }
+  const pct = Math.round(((current - previous) / previous) * 100);
+  return pct >= 0 ? `+${pct}%` : `${pct}%`;
+}
+
+function buildRevenueOverview(
+  now: Date,
+  payments: ReportPaymentAttemptRecord[],
+  currency: string
+): AdminRevenueOverview {
+  const approvedPayments = payments.filter(
+    (p) => p.paymentStatus === "APPROVED" && p.processedAt !== null
+  );
+
+  const days: AdminRevenueOverviewBar[] = [];
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    const dateIsoPrefix = d.toISOString().slice(0, 10);
+    const dayLabel = dayNames[d.getUTCDay()];
+
+    const dayPayments = approvedPayments.filter((p) =>
+      p.processedAt?.startsWith(dateIsoPrefix)
+    );
+    const dayAmount = dayPayments.reduce((sum, p) => sum + p.amount, 0);
+
+    days.push({
+      label: dayLabel,
+      date: dateIsoPrefix,
+      amount: dayAmount,
+      formattedAmount: formatCurrency(dayAmount, currency),
+      heightPercentage: 0,
+    });
+  }
+
+  const maxAmount = Math.max(...days.map((d) => d.amount), 0);
+  const totalAmount = days.reduce((sum, d) => sum + d.amount, 0);
+
+  const bars = days.map((d) => ({
+    ...d,
+    heightPercentage:
+      maxAmount > 0
+        ? Math.max(d.amount > 0 ? 8 : 0, Math.round((d.amount / maxAmount) * 100))
+        : 0,
+  }));
+
+  return {
+    totalAmount,
+    formattedTotalAmount: formatCurrency(totalAmount, currency),
+    currency,
+    bars,
+  };
+}
+
+function buildTopWorkspaces(
+  reservations: ReportReservationRecord[]
+): AdminTopWorkspaceSummary[] {
+  const usageByWorkspace = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      templateName: string;
+      floorName: string;
+      reservationCount: number;
+      bookedHours: number;
+    }
+  >();
+
+  for (const reservation of reservations) {
+    if (!reservation.workspaceDisplayName) {
+      continue;
+    }
+
+    const key = reservation.workspaceInstanceCode ?? reservation.workspaceDisplayName;
+    const existing = usageByWorkspace.get(key) ?? {
+      id: key,
+      name: reservation.workspaceDisplayName,
+      templateName: reservation.workspaceTemplateName ?? "Standard Workspace",
+      floorName: reservation.floorName ?? "Main Floor",
+      reservationCount: 0,
+      bookedHours: 0,
+    };
+
+    existing.reservationCount += 1;
+    if (reservation.bookingStartAt && reservation.bookingEndAt) {
+      existing.bookedHours += calculateDurationHours(
+        reservation.bookingStartAt,
+        reservation.bookingEndAt
+      );
+    } else {
+      existing.bookedHours += 1;
+    }
+    usageByWorkspace.set(key, existing);
+  }
+
+  const totalBookings = reservations.length || 1;
+  return Array.from(usageByWorkspace.values())
+    .sort((left, right) => right.reservationCount - left.reservationCount || right.bookedHours - left.bookedHours)
+    .slice(0, 5)
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      templateName: entry.templateName,
+      floorName: entry.floorName,
+      reservationCount: entry.reservationCount,
+      bookedHours: Number(entry.bookedHours.toFixed(1)),
+      occupancyPercentage: Math.min(100, Math.round((entry.reservationCount / totalBookings) * 100)),
+    }));
 }
 
 function buildTopUsers(

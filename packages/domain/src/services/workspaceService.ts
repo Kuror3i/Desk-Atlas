@@ -278,7 +278,7 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
       return repository.createInstance({
         templateId: template.id,
         floorId: normalizedInput.floorId,
-        instanceCode: `V-${Date.now().toString().slice(-6)}`,
+        instanceCode: `V-${(highestSequence + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`,
         displayName: newName,
         operationalStatus: normalizedInput.operationalStatus ?? 'ACTIVE',
       });

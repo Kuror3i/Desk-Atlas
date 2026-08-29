@@ -44,6 +44,12 @@ const workspaceB1 = {
   operationalStatus: 'ACTIVE',
 };
 
+const workspaceARect = {
+  id: 'instance-a-rect',
+  floorId: floorA.id,
+  operationalStatus: 'ACTIVE',
+};
+
 async function run() {
   const workspaceRepository = new InMemoryWorkspaceRepository();
   const workspaceService = createWorkspaceService(workspaceRepository);
@@ -69,7 +75,7 @@ async function run() {
 
   const repository = new InMemoryMapRepository({
     floors: [floorA, floorB],
-    workspaceInstances: [workspaceA1, workspaceA2, workspaceB1],
+    workspaceInstances: [workspaceA1, workspaceA2, workspaceB1, workspaceARect],
   });
   const service = createMapService(repository);
 
@@ -391,6 +397,145 @@ async function run() {
     ],
   });
   assert.equal((await service.loadPublished(floorA.id))?.elements[0].id, 'element-bookable-a2');
+
+  // Verify rectangular workspace template placement and round-trip persistence
+  const rectTemplate = await workspaceService.createTemplate({
+    name: 'Executive Boardroom',
+    capacity: 8,
+    rateAmount: 600,
+    defaultShape: 'rectangle',
+    defaultColor: '#009689',
+  });
+
+  const rectElementWidth = 120;
+  const rectElementHeight = 80;
+  await service.saveDraft({
+    floorId: floorA.id,
+    elements: [
+      {
+        id: 'element-rect-workspace',
+        elementRole: 'WORKSPACE',
+        elementType: rectTemplate.defaultShape,
+        workspaceInstanceId: workspaceARect.id,
+        x: 40,
+        y: 40,
+        width: rectElementWidth,
+        height: rectElementHeight,
+        rotation: 0,
+        zIndex: 1,
+        label: 'Boardroom 1',
+      },
+    ],
+  });
+
+  const rectDraft = await service.loadDraft(floorA.id);
+  assert.ok(rectDraft);
+  assert.equal(rectDraft.elements[0].width, 120);
+  assert.equal(rectDraft.elements[0].height, 80);
+  assert.notEqual(rectDraft.elements[0].width, rectDraft.elements[0].height);
+
+  const rectPublished = await service.publishDraft({ floorId: floorA.id });
+  assert.equal(rectPublished.published.elements[0].width, 120);
+  assert.equal(rectPublished.published.elements[0].height, 80);
+
+  // Verify wall structure fixed thin height normalization and width adjustment
+  await service.saveDraft({
+    floorId: floorA.id,
+    elements: [
+      {
+        id: 'element-wall-solid',
+        elementRole: 'STRUCTURE',
+        elementType: 'wall_solid',
+        x: 60,
+        y: 60,
+        width: 200,
+        height: 100, // Attempted non-thin height
+        rotation: 0,
+        zIndex: 1,
+        label: 'Interior Wall',
+      },
+    ],
+  });
+
+  // Verify amenity elements (restroom, pantry, emergency_exit) persistence, colors, and invariants
+  await service.saveDraft({
+    floorId: floorA.id,
+    elements: [
+      {
+        id: 'element-restroom-amn',
+        elementRole: 'AMENITY',
+        elementType: 'restroom',
+        x: 100,
+        y: 100,
+        width: 100,
+        height: 80,
+        rotation: 0,
+        zIndex: 1,
+        label: 'Restroom',
+        properties: { color: '#E0F2FE' },
+      },
+      {
+        id: 'element-pantry-amn',
+        elementRole: 'AMENITY',
+        elementType: 'pantry',
+        x: 220,
+        y: 100,
+        width: 100,
+        height: 80,
+        rotation: 0,
+        zIndex: 2,
+        label: 'Pantry',
+        properties: { color: '#FEF3C7' },
+      },
+      {
+        id: 'element-exit-amn',
+        elementRole: 'AMENITY',
+        elementType: 'emergency_exit',
+        x: 340,
+        y: 100,
+        width: 100,
+        height: 80,
+        rotation: 0,
+        zIndex: 3,
+        label: 'Emergency Exit',
+        properties: { color: '#DCFCE7' },
+      },
+    ],
+  });
+
+  const amenityDraft = await service.loadDraft(floorA.id);
+  assert.ok(amenityDraft);
+  assert.equal(amenityDraft.elements.length, 3);
+  assert.equal(amenityDraft.elements[0].elementRole, 'AMENITY');
+  assert.equal(amenityDraft.elements[0].elementType, 'restroom');
+  assert.equal(amenityDraft.elements[0].properties.color, '#E0F2FE');
+  assert.equal(amenityDraft.elements[1].elementRole, 'AMENITY');
+  assert.equal(amenityDraft.elements[1].elementType, 'pantry');
+  assert.equal(amenityDraft.elements[1].properties.color, '#FEF3C7');
+  assert.equal(amenityDraft.elements[2].elementRole, 'AMENITY');
+  assert.equal(amenityDraft.elements[2].elementType, 'emergency_exit');
+  assert.equal(amenityDraft.elements[2].properties.color, '#DCFCE7');
+
+  // Amenity cannot link to workspace instance
+  await assert.rejects(
+    () =>
+      service.saveDraft({
+        floorId: floorA.id,
+        elements: [
+          {
+            id: 'element-invalid-amenity',
+            elementRole: 'AMENITY',
+            elementType: 'restroom',
+            workspaceInstanceId: workspaceA1.id,
+            x: 100,
+            y: 100,
+            width: 100,
+            height: 80,
+          },
+        ],
+      }),
+    MapValidationError
+  );
 }
 
 run()

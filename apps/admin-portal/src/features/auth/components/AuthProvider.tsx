@@ -5,35 +5,53 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 type Role = 'admin' | 'staff' | 'member' | null;
 
 type User = {
+  id?: string;
+  email?: string;
   role: Role;
   name?: string;
+  token?: string;
 } | null;
 
 type AuthContextType = {
   user: User;
-  login: (role: Exclude<Role, null>, name?: string) => void;
+  loading: boolean;
+  login: (role: Exclude<Role, null>, name?: string, details?: { id?: string; email?: string; token?: string }) => void;
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const STORAGE_KEY = 'desk_atlas_user';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const STORAGE_KEY = 'desk_atlas_user';
-  const [user, setUser] = useState<User>(null);
-  const [mounted, setMounted] = useState(false);
+  const [user, setUser] = useState<User>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setMounted(true);
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setUser(JSON.parse(raw));
+      if (raw) {
+        setUser(JSON.parse(raw));
+      }
     } catch (e) {
       // ignore
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const login = (role: Exclude<Role, null>, name?: string) => {
-    const u = { role, name } as User;
+  const login = (role: Exclude<Role, null>, name?: string, details?: { id?: string; email?: string; token?: string }) => {
+    const u = { role, name, ...details } as User;
     setUser(u);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
@@ -51,10 +69,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  if (!mounted) return null;
-
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

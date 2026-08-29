@@ -1,20 +1,25 @@
 import type {
   AdminReportExportType,
+  AdminReportRange,
   AdminReportsSnapshot,
 } from "@deskatlas/domain";
 
-export async function fetchAdminReportsSnapshot(): Promise<AdminReportsSnapshot> {
-  const response = await fetch("/api/admin/reports", { cache: "no-store" });
+export async function fetchAdminReportsSnapshot(range: AdminReportRange = "30days"): Promise<AdminReportsSnapshot> {
+  const response = await fetch(`/api/admin/reports?range=${encodeURIComponent(range)}`, { cache: "no-store" });
   return parseJson(response);
 }
 
-export async function downloadAdminReport(exportType: AdminReportExportType): Promise<void> {
-  const response = await fetch(
-    `/api/admin/reports/export?type=${encodeURIComponent(exportType)}`,
-    {
-      cache: "no-store",
-    }
-  );
+export async function downloadAdminReport(
+  exportType: AdminReportExportType,
+  range?: AdminReportRange
+): Promise<void> {
+  const url = range
+    ? `/api/admin/reports/export?type=${encodeURIComponent(exportType)}&range=${encodeURIComponent(range)}`
+    : `/api/admin/reports/export?type=${encodeURIComponent(exportType)}`;
+
+  const response = await fetch(url, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -27,14 +32,14 @@ export async function downloadAdminReport(exportType: AdminReportExportType): Pr
     disposition?.match(/filename="([^"]+)"/)?.[1] ??
     `deskatlas-${exportType}.csv`;
 
-  const url = URL.createObjectURL(blob);
+  const downloadUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url;
+  link.href = downloadUrl;
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(downloadUrl);
 }
 
 async function parseJson(response: Response) {

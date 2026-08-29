@@ -182,6 +182,16 @@ async function normalizeElements(
   return normalized;
 }
 
+function isWallElement(elementType: string, elementRole: MapElementRole): boolean {
+  const type = elementType.toLowerCase();
+  return elementRole === 'STRUCTURE' && (type.includes('wall') || type.includes('thin') || type.includes('glass') || type.includes('separator'));
+}
+
+function isThinWallElement(elementType: string, elementRole: MapElementRole): boolean {
+  const type = elementType.toLowerCase();
+  return elementRole === 'STRUCTURE' && (type.includes('thin') || type.includes('separator'));
+}
+
 function normalizeElementGeometry(
   element: MapElementInput,
   index: number,
@@ -199,10 +209,17 @@ function normalizeElementGeometry(
     throw new MapValidationError(`${label} coordinates must be non-negative`);
   }
 
+  const isWall = isWallElement(elementType, elementRole);
+  const isThinWall = isThinWallElement(elementType, elementRole);
+
   const x = snapToGrid(rawX, gridSize, false);
   const y = snapToGrid(rawY, gridSize, false);
   const width = snapToGrid(requirePositiveNumber(element.width, `${label} width`), gridSize, true);
-  const height = snapToGrid(requirePositiveNumber(element.height, `${label} height`), gridSize, true);
+  const height = isThinWall
+    ? 10
+    : (isWall
+      ? snapToGrid(20, gridSize, true)
+      : snapToGrid(requirePositiveNumber(element.height, `${label} height`), gridSize, true));
   const rotation = normalizeRotation(element.rotation ?? 0, label);
   const zIndex = normalizeInteger(element.zIndex ?? index, `${label} z-index`);
 

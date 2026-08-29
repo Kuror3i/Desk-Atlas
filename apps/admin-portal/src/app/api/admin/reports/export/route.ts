@@ -1,4 +1,4 @@
-import { type AdminReportExportType } from "@deskatlas/domain";
+import { type AdminReportExportType, type AdminReportRange } from "@deskatlas/domain";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminReportsService } from "../_lib/reportsService";
 
@@ -12,17 +12,21 @@ const allowedExportTypes = new Set<AdminReportExportType>([
   "checkin",
 ]);
 
+const validRanges = new Set<AdminReportRange>(["today", "7days", "30days", "month", "year"]);
+
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   const exportType = request.nextUrl.searchParams.get("type") as AdminReportExportType | null;
+  const rangeParam = request.nextUrl.searchParams.get("range") as AdminReportRange | null;
+  const range = rangeParam && validRanges.has(rangeParam) ? rangeParam : undefined;
 
   if (!exportType || !allowedExportTypes.has(exportType)) {
     return NextResponse.json({ error: "Invalid report export type." }, { status: 400 });
   }
 
   try {
-    const report = await getAdminReportsService().exportAdminReport(exportType);
+    const report = await getAdminReportsService().exportAdminReport(exportType, range);
     return new NextResponse(report.content, {
       status: 200,
       headers: {

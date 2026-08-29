@@ -1,5 +1,10 @@
 import { ReservationDetail } from '@/features/reservations';
 
-export default function ReservationDetailPage({ params }: { params: { id: string } }) {
-  return <ReservationDetail id={params.id} />;
+export default async function ReservationDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  return <ReservationDetail id={id} />;
 }

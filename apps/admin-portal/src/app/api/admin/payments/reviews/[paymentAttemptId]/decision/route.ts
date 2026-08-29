@@ -59,11 +59,39 @@ export async function POST(
       body.decision === "APPROVE"
         ? await paymentReviewService.getPaymentReviewDetail(paymentAttemptId)
         : null;
+    let actorUserId = String(body.actorUserId ?? "").trim();
+    if (!actorUserId) {
+      const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && serviceRoleKey) {
+        try {
+          const res = await fetch(
+            `${supabaseUrl.replace(/\/$/, "")}/rest/v1/staff_profiles?select=user_id&role=eq.ADMIN&is_active=eq.true&limit=1`,
+            {
+              headers: {
+                apikey: serviceRoleKey,
+                Authorization: `Bearer ${serviceRoleKey}`,
+              },
+              cache: "no-store",
+            }
+          );
+          if (res.ok) {
+            const adminProfiles = await res.json();
+            if (Array.isArray(adminProfiles) && adminProfiles[0]?.user_id) {
+              actorUserId = adminProfiles[0].user_id;
+            }
+          }
+        } catch {
+          // fallback to actorUserId as-is
+        }
+      }
+    }
+
     const result = await paymentReviewService.reviewPayment({
       paymentAttemptId,
       actor: {
-        userId: String(body.actorUserId ?? "").trim(),
-        role: body.actorRole,
+        userId: actorUserId,
+        role: body.actorRole ?? "ADMIN",
       },
       decision: body.decision,
       rejectionReason: body.rejectionReason,

@@ -20,6 +20,18 @@ export function WorkspaceList() {
   const [activeTab, setActiveTab] = useState<'templates' | 'instances'>('templates');
   const [instanceFilter, setInstanceFilter] = useState<string>('All');
   const [modalMode, setModalMode] = useState<'create_template' | 'edit_template' | 'edit_instance' | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Data states from DB
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [instances, setInstances] = useState<any[]>([]);
+  const [floors, setFloors] = useState<any[]>([]);
+
+  // Selected item states
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
 
   // Form states
   const [templateName, setTemplateName] = useState('');
@@ -28,57 +40,308 @@ export function WorkspaceList() {
   const [rateAmount, setRateAmount] = useState('');
   const [defaultShape, setDefaultShape] = useState('desk');
   const [defaultColor, setDefaultColor] = useState('#009689');
-  const [isActive, setIsActive] = useState(true);
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [createdBlobUrl, setCreatedBlobUrl] = useState<string | null>(null);
+  const [photoPosition, setPhotoPosition] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
+  const [isAdjustingPosition, setIsAdjustingPosition] = useState(false);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   
+  const dragStartRef = React.useRef<{ x: number; y: number; posX: number; posY: number } | null>(null);
+  const imageContainerRef = React.useRef<HTMLDivElement | null>(null);
+
   // Instance form states
   const [instanceName, setInstanceName] = useState('');
-  const [instanceStatus, setInstanceStatus] = useState('Active');
+  const [instanceStatus, setInstanceStatus] = useState('ACTIVE');
 
-  const wsTemplates = [
-    { name: 'Skypod Table', rate: 450, capacity: '1 person', count: 12 },
-    { name: 'Meeting Room', rate: 1200, capacity: '4-6 people', count: 4 },
-    { name: 'Lounge Seat', rate: 300, capacity: '1 person', count: 8 },
-    { name: 'Dedicated Desk', rate: 600, capacity: '1 person', count: 6 },
-  ];
+  const cleanupBlobUrl = () => {
+    if (createdBlobUrl) {
+      URL.revokeObjectURL(createdBlobUrl);
+      setCreatedBlobUrl(null);
+    }
+  };
 
-  const wsInstances = [
-    { name: 'Skypod 01', floor: 'Ground Floor', template: 'Skypod Table', mark: '✓', status: 'Active', statusStyle: { background: 'var(--da-info)', color: 'var(--da-brand-dark)' } },
-    { name: 'Skypod 02', floor: 'Ground Floor', template: 'Skypod Table', mark: '✓', status: 'Active', statusStyle: { background: 'var(--da-info)', color: 'var(--da-brand-dark)' } },
-    { name: 'Meeting 01', floor: 'Ground Floor', template: 'Meeting Room', mark: '✓', status: 'Active', statusStyle: { background: 'var(--da-info)', color: 'var(--da-brand-dark)' } },
-    { name: 'Lounge 05', floor: 'Mezzanine', template: 'Lounge Seat', mark: '!', status: 'Maintenance', statusStyle: { background: 'var(--da-soft)', color: 'var(--da-brand-dark)' } },
-  ];
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/admin/workspaces');
+      if (!res.ok) throw new Error('Failed to fetch workspaces');
+      const data = await res.json();
+      setTemplates(data.templates || []);
+      setInstances(data.instances || []);
+      setFloors(data.floors || []);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error loading workspaces');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const handleSave = (e: React.FormEvent) => {
+  React.useEffect(() => {
+    loadData();
+    return () => {
+      if (createdBlobUrl) {
+        URL.revokeObjectURL(createdBlobUrl);
+      }
+    };
+  }, [createdBlobUrl]);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setErrorMsg(null);
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+      if (!allowedTypes.includes(file.type)) {
+        setErrorMsg('Invalid file type. Allowed formats: PNG, JPG, JPEG, WebP');
+        e.target.value = '';
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setErrorMsg('File size exceeds 5MB limit');
+        e.target.value = '';
+        return;
+      }
+
+      cleanupBlobUrl();
+      const objectUrl = URL.createObjectURL(file);
+      setCreatedBlobUrl(objectUrl);
+      setImageFile(file);
+      setPreviewUrl(objectUrl);
+      setPhotoPosition({ x: 50, y: 50 });
+      setIsAdjustingPosition(false);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    cleanupBlobUrl();
+    setImageFile(null);
+    setPhotoPath(null);
+    setPreviewUrl(null);
+    setPhotoPosition({ x: 50, y: 50 });
+    setIsAdjustingPosition(false);
+  };
+
+  const handlePhotoMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isAdjustingPosition) {
+      setIsAdjustingPosition(true);
+      return;
+    }
     e.preventDefault();
+    setIsDraggingPhoto(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      posX: photoPosition.x,
+      posY: photoPosition.y,
+    };
+  };
+
+  const handlePhotoMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingPhoto || !dragStartRef.current || !imageContainerRef.current) return;
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+    
+    const newX = Math.max(0, Math.min(100, dragStartRef.current.posX - (deltaX / rect.width) * 100));
+    const newY = Math.max(0, Math.min(100, dragStartRef.current.posY - (deltaY / rect.height) * 100));
+    
+    setPhotoPosition({ x: Math.round(newX), y: Math.round(newY) });
+  };
+
+  const handlePhotoMouseUp = () => {
+    setIsDraggingPhoto(false);
+    dragStartRef.current = null;
+  };
+
+  const handlePhotoTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isAdjustingPosition) {
+      setIsAdjustingPosition(true);
+      return;
+    }
+    if (e.touches.length === 1) {
+      setIsDraggingPhoto(true);
+      dragStartRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        posX: photoPosition.x,
+        posY: photoPosition.y,
+      };
+    }
+  };
+
+  const handlePhotoTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isDraggingPhoto || !dragStartRef.current || !imageContainerRef.current || e.touches.length !== 1) return;
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    const deltaX = e.touches[0].clientX - dragStartRef.current.x;
+    const deltaY = e.touches[0].clientY - dragStartRef.current.y;
+    
+    const newX = Math.max(0, Math.min(100, dragStartRef.current.posX - (deltaX / rect.width) * 100));
+    const newY = Math.max(0, Math.min(100, dragStartRef.current.posY - (deltaY / rect.height) * 100));
+    
+    setPhotoPosition({ x: Math.round(newX), y: Math.round(newY) });
+  };
+
+  const handlePhotoTouchEnd = () => {
+    setIsDraggingPhoto(false);
+    dragStartRef.current = null;
+  };
+
+  const uploadImageIfSelected = async (): Promise<string | null> => {
+    if (!imageFile) return photoPath;
+    const formData = new FormData();
+    formData.append('file', imageFile);
+
+    const res = await fetch('/api/admin/workspaces/upload-image', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to upload workspace image');
+    }
+
+    const data = await res.json();
+    return data.url;
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActionLoading(true);
+    setErrorMsg(null);
+
+    try {
+      if (modalMode === 'create_template') {
+        const uploadedUrl = await uploadImageIfSelected();
+        const res = await fetch('/api/admin/workspaces/templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: templateName,
+            description: description || null,
+            photoPath: uploadedUrl || null,
+            capacity: parseInt(capacity, 10) || 1,
+            rateAmount: parseFloat(rateAmount) || 0,
+            defaultShape,
+            defaultColor,
+            defaultStyle: { 
+              tags: recommendations, 
+              recommendations: recommendations,
+              photoPosition: photoPosition,
+            },
+            isActive: true,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Failed to create template');
+        }
+
+        await loadData();
+        closeModal();
+      } else if (modalMode === 'edit_template' && selectedTemplateId) {
+        const uploadedUrl = await uploadImageIfSelected();
+        const res = await fetch(`/api/admin/workspaces/templates/${selectedTemplateId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: templateName,
+            description: description || null,
+            photoPath: uploadedUrl || null,
+            capacity: parseInt(capacity, 10) || 1,
+            rateAmount: parseFloat(rateAmount) || 0,
+            defaultShape,
+            defaultColor,
+            defaultStyle: { 
+              tags: recommendations, 
+              recommendations: recommendations,
+              photoPosition: photoPosition,
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Failed to update template');
+        }
+
+        await loadData();
+        closeModal();
+      } else if (modalMode === 'edit_instance' && selectedInstanceId) {
+        const res = await fetch(`/api/admin/workspaces/instances/${selectedInstanceId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: instanceName,
+            operationalStatus: instanceStatus,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Failed to update instance');
+        }
+
+        await loadData();
+        closeModal();
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'An error occurred while saving');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const closeModal = () => {
+    cleanupBlobUrl();
+    setIsAdjustingPosition(false);
+    setIsDraggingPhoto(false);
     setModalMode(null);
   };
 
   const openCreateTemplate = () => {
+    cleanupBlobUrl();
     setTemplateName('');
     setDescription('');
     setCapacity('');
     setRateAmount('');
     setDefaultShape('desk');
     setDefaultColor('#009689');
+    setPhotoPath(null);
+    setImageFile(null);
+    setPreviewUrl(null);
+    setPhotoPosition({ x: 50, y: 50 });
+    setIsAdjustingPosition(false);
     setRecommendations([]);
+    setSelectedTemplateId(null);
     setModalMode('create_template');
   };
 
   const openEditTemplate = (t: any) => {
+    cleanupBlobUrl();
+    setSelectedTemplateId(t.id);
     setTemplateName(t.name);
-    setCapacity(t.capacity.split(' ')[0]);
-    setRateAmount(t.rate.toString());
-    setDescription('Existing description...');
-    setDefaultShape('desk');
-    setDefaultColor('#009689');
-    setRecommendations(['Solo']);
+    setCapacity(String(t.capacity || '1'));
+    setRateAmount(String(t.rateAmount ?? t.rate ?? '0'));
+    setDescription(t.description || '');
+    setDefaultShape(t.defaultShape || 'desk');
+    setDefaultColor(t.defaultColor || '#009689');
+    setPhotoPath(t.photoPath || null);
+    setImageFile(null);
+    setPreviewUrl(t.photoPath || null);
+    setPhotoPosition(t.defaultStyle?.photoPosition || { x: 50, y: 50 });
+    setIsAdjustingPosition(false);
+    setRecommendations(t.defaultStyle?.recommendations || t.defaultStyle?.tags || []);
     setModalMode('edit_template');
   };
 
   const openEditInstance = (i: any) => {
-    setInstanceName(i.name);
-    setInstanceStatus(i.status);
+    setSelectedInstanceId(i.id);
+    setInstanceName(i.displayName || i.name);
+    setInstanceStatus(i.operationalStatus || i.status || 'ACTIVE');
     setModalMode('edit_instance');
   };
 
@@ -102,6 +365,12 @@ export function WorkspaceList() {
           Create Template
         </button>
       </div>
+
+      {errorMsg && (
+        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginBottom: '16px', fontFamily: 'var(--da-font-family)' }}>
+          {errorMsg}
+        </div>
+      )}
       
       <div style={{ display: 'flex', gap: '6px', marginBottom: '18px' }}>
         <button 
@@ -118,22 +387,51 @@ export function WorkspaceList() {
         </button>
       </div>
 
-      {activeTab === 'templates' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-          {wsTemplates.map((t, i) => (
-            <div key={i} style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '16px' }}>
-              <div style={{ fontWeight: 800, color: 'var(--da-text-primary)', fontSize: '15px' }}>{t.name}</div>
-              <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '10px' }}>₱{t.rate}/hour &middot; Capacity {t.capacity} &middot; {t.count} instances</div>
-              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap', background: 'var(--da-info)', color: 'var(--da-brand-dark)' }}>Active</span>
-              <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
-                <button onClick={() => openEditTemplate(t)} style={{ flex: 1, background: 'var(--da-canvas)', border: 'none', padding: '7px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', color: 'var(--da-text-primary)' }}>Edit</button>
-              </div>
-            </div>
-          ))}
+      {loading ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--da-text-secondary)', fontSize: '14px', fontFamily: 'var(--da-font-family)' }}>
+          Loading workspaces...
         </div>
-      )}
-
-      {activeTab === 'instances' && (
+      ) : activeTab === 'templates' ? (
+        templates.length === 0 ? (
+          <div style={{ padding: '40px', textAlign: 'center', background: '#fff', border: '1px dashed var(--da-border)', borderRadius: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>
+            No workspace templates created yet. Click "Create Template" above to add your first template.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+            {templates.map((t, i) => {
+              const instanceCount = instances.filter(ins => ins.templateId === t.id || ins.template?.id === t.id).length;
+              return (
+                <div key={t.id || i} style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '16px' }}>
+                  {t.photoPath && (
+                    <div style={{ width: '100%', height: '110px', borderRadius: '8px', overflow: 'hidden', marginBottom: '12px', background: 'var(--da-canvas)' }}>
+                      <img 
+                        src={t.photoPath} 
+                        alt={t.name} 
+                        style={{ 
+                          width: '100%', 
+                          height: '100%', 
+                          objectFit: 'cover',
+                          objectPosition: `${t.defaultStyle?.photoPosition?.x ?? 50}% ${t.defaultStyle?.photoPosition?.y ?? 50}%`
+                        }} 
+                      />
+                    </div>
+                  )}
+                  <div style={{ fontWeight: 800, color: 'var(--da-text-primary)', fontSize: '15px' }}>{t.name}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '10px' }}>
+                    ₱{t.rateAmount ?? t.rate}/hour &middot; Capacity {t.capacity} &middot; {instanceCount} instances
+                  </div>
+                  <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap', background: t.isActive !== false ? 'var(--da-info)' : 'var(--da-soft)', color: 'var(--da-brand-dark)' }}>
+                    {t.isActive !== false ? 'Active' : 'Inactive'}
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
+                    <button onClick={() => openEditTemplate(t)} style={{ flex: 1, background: 'var(--da-canvas)', border: 'none', padding: '7px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', color: 'var(--da-text-primary)' }}>Edit</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
         <div>
           <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
             <button
@@ -142,7 +440,7 @@ export function WorkspaceList() {
             >
               All
             </button>
-            {Array.from(new Set(wsInstances.map(i => i.template))).map(tpl => (
+            {Array.from(new Set(instances.map(i => i.template?.name || i.template || 'Default'))).map(tpl => (
               <button
                 key={tpl}
                 onClick={() => setInstanceFilter(tpl)}
@@ -153,30 +451,46 @@ export function WorkspaceList() {
             ))}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {Array.from(new Set(wsInstances.map(i => i.template)))
-              .filter(tpl => instanceFilter === 'All' || instanceFilter === tpl)
-              .map(tpl => (
-                <div key={tpl}>
-                  <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--da-text-primary)', marginBottom: '12px', marginTop: 0 }}>{tpl}</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                    {wsInstances.filter(i => i.template === tpl).map((i, idx) => (
-                      <div key={idx} style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '16px' }}>
-                        <div style={{ fontWeight: 800, color: 'var(--da-text-primary)', fontSize: '15px' }}>{i.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '10px' }}>{i.floor}</div>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap', ...i.statusStyle }}>
-                          <span aria-hidden="true">{i.mark}</span>{i.status}
-                        </span>
-                        <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
-                          <button onClick={() => openEditInstance(i)} style={{ flex: 1, background: 'var(--da-canvas)', border: 'none', padding: '7px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', color: 'var(--da-text-primary)' }}>Edit</button>
-                        </div>
-                      </div>
-                    ))}
+          {instances.length === 0 ? (
+            <div style={{ padding: '40px', textAlign: 'center', background: '#fff', border: '1px dashed var(--da-border)', borderRadius: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>
+              No physical instances created yet. Open Map Builder to place instances on a floor.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {Array.from(new Set(instances.map(i => i.template?.name || i.template || 'Default')))
+                .filter(tpl => instanceFilter === 'All' || instanceFilter === tpl)
+                .map(tpl => (
+                  <div key={tpl}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--da-text-primary)', marginBottom: '12px', marginTop: 0 }}>{tpl}</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                      {instances
+                        .filter(i => (i.template?.name || i.template || 'Default') === tpl)
+                        .map((i, idx) => {
+                          const status = i.operationalStatus || i.status || 'ACTIVE';
+                          const statusStyle = status === 'ACTIVE'
+                            ? { background: 'var(--da-info)', color: 'var(--da-brand-dark)' }
+                            : { background: 'var(--da-soft)', color: 'var(--da-brand-dark)' };
+                          const mark = status === 'ACTIVE' ? '✓' : '!';
+                          return (
+                            <div key={i.id || idx} style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '16px' }}>
+                              <div style={{ fontWeight: 800, color: 'var(--da-text-primary)', fontSize: '15px' }}>{i.displayName || i.name}</div>
+                              <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '10px' }}>
+                                {i.floor?.name || i.floor || 'Floor'} &middot; {i.instanceCode || ''}
+                              </div>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '9999px', whiteSpace: 'nowrap', ...statusStyle }}>
+                                <span aria-hidden="true">{mark}</span>{status}
+                              </span>
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
+                                <button onClick={() => openEditInstance(i)} style={{ flex: 1, background: 'var(--da-canvas)', border: 'none', padding: '7px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', color: 'var(--da-text-primary)' }}>Edit</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
                   </div>
-                </div>
-              ))
-            }
-          </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -240,11 +554,116 @@ export function WorkspaceList() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: 'var(--da-text-primary)', marginBottom: '6px' }}>Template Image</label>
-                    <div style={{ position: 'relative', border: '1px dashed var(--da-border)', borderRadius: '8px', padding: '24px', textAlign: 'center', background: 'var(--da-canvas)', cursor: 'pointer' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-brand-dark)', marginBottom: '4px' }}>Click to upload or drag and drop</div>
-                      <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)' }}>PNG, JPG up to 5MB</div>
-                      <input type="file" accept="image/png, image/jpeg" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} />
-                    </div>
+                    {previewUrl ? (
+                      <div style={{ border: '1px solid var(--da-border)', borderRadius: '8px', padding: '14px', background: 'var(--da-canvas)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                          <div
+                            ref={imageContainerRef}
+                            onMouseDown={handlePhotoMouseDown}
+                            onMouseMove={handlePhotoMouseMove}
+                            onMouseUp={handlePhotoMouseUp}
+                            onMouseLeave={handlePhotoMouseUp}
+                            onTouchStart={handlePhotoTouchStart}
+                            onTouchMove={handlePhotoTouchMove}
+                            onTouchEnd={handlePhotoTouchEnd}
+                            onClick={() => {
+                              if (!isAdjustingPosition) setIsAdjustingPosition(true);
+                            }}
+                            style={{
+                              width: '220px',
+                              height: '110px',
+                              borderRadius: '8px',
+                              overflow: 'hidden',
+                              background: '#e2e8f0',
+                              position: 'relative',
+                              flexShrink: 0,
+                              cursor: isAdjustingPosition ? (isDraggingPhoto ? 'grabbing' : 'grab') : 'pointer',
+                              border: isAdjustingPosition ? '2px solid var(--da-brand-dark)' : '1px solid var(--da-border)',
+                              userSelect: 'none',
+                              touchAction: isAdjustingPosition ? 'none' : 'auto',
+                            }}
+                          >
+                            <img
+                              src={previewUrl}
+                              alt="Template preview"
+                              draggable={false}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                objectPosition: `${photoPosition.x}% ${photoPosition.y}%`,
+                                pointerEvents: 'none',
+                                userSelect: 'none',
+                              }}
+                            />
+                            {isAdjustingPosition ? (
+                              <div style={{ position: 'absolute', top: '6px', left: '6px', pointerEvents: 'none' }}>
+                                <span style={{ background: 'rgba(18, 37, 26, 0.85)', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backdropFilter: 'blur(4px)' }}>
+                                  Drag to reposition
+                                </span>
+                              </div>
+                            ) : (
+                              <div style={{ position: 'absolute', bottom: '6px', right: '6px', pointerEvents: 'none' }}>
+                                <span style={{ background: 'rgba(18, 37, 26, 0.65)', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backdropFilter: 'blur(4px)' }}>
+                                  Click to reposition
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ flex: 1, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--da-text-primary)', wordBreak: 'break-all' }}>
+                              {imageFile ? imageFile.name : 'Saved Template Photo'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', lineHeight: 1.4 }}>
+                              Card preview (220×110px). Click photo to drag and adjust placement.
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
+                              {isAdjustingPosition && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsAdjustingPosition(false);
+                                  }}
+                                  style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                                >
+                                  Done
+                                </button>
+                              )}
+                              <label style={{ background: '#fff', border: '1px solid var(--da-border)', padding: '5px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', color: 'var(--da-text-primary)', display: 'inline-block' }}>
+                                Change
+                                <input 
+                                  type="file" 
+                                  accept="image/png, image/jpeg, image/jpg, image/webp" 
+                                  onChange={handleImageChange}
+                                  style={{ display: 'none' }} 
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={handleRemovePhoto}
+                                style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#b91c1c', padding: '5px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ position: 'relative', border: '1px dashed var(--da-border)', borderRadius: '8px', padding: '24px', textAlign: 'center', background: 'var(--da-canvas)', cursor: 'pointer' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-brand-dark)', marginBottom: '4px' }}>
+                          Click to upload or drag and drop
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)' }}>PNG, JPG, JPEG, WebP up to 5MB (stored in Supabase Object Storage)</div>
+                        <input 
+                          type="file" 
+                          accept="image/png, image/jpeg, image/jpg, image/webp" 
+                          onChange={handleImageChange}
+                          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }} 
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="mobile-grid-1" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -338,16 +757,18 @@ export function WorkspaceList() {
               <div className="mobile-flex-col" style={{ display: 'flex', gap: '10px', marginTop: '10px', paddingTop: '16px', borderTop: '1px solid var(--da-border-light)' }}>
                 <button 
                   type="button" 
-                  onClick={() => setModalMode(null)}
+                  disabled={actionLoading}
+                  onClick={closeModal}
                   style={{ flex: 1, padding: '12px', borderRadius: '8px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', background: '#fff', color: 'var(--da-text-primary)', border: '1px solid var(--da-border)', fontFamily: 'var(--da-font-family)' }}
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit"
-                  style={{ flex: 1, padding: '12px', borderRadius: '8px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', background: 'var(--da-brand-dark)', color: '#fff', border: 'none', fontFamily: 'var(--da-font-family)' }}
+                  disabled={actionLoading}
+                  style={{ flex: 1, padding: '12px', borderRadius: '8px', fontSize: '14px', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer', background: 'var(--da-brand-dark)', color: '#fff', border: 'none', fontFamily: 'var(--da-font-family)', opacity: actionLoading ? 0.7 : 1 }}
                 >
-                  {modalMode === 'create_template' ? 'Create Template' : 'Save Changes'}
+                  {actionLoading ? 'Saving...' : modalMode === 'create_template' ? 'Create Template' : 'Save Changes'}
                 </button>
               </div>
             </form>

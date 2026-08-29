@@ -1,4 +1,7 @@
 import {
+  AdminReservationCandidateSummary,
+  AdminReservationDetail,
+  AdminReservationSummary,
   BookingAccessState,
   CounterPaymentRecord,
   CreateReservationRequest,
@@ -16,6 +19,17 @@ import {
   ReservationResponseDTO,
   StaffOperationalReservation,
 } from "../models/reservation";
+import { AdminReservationRepository } from "./adminReservationRepository";
+import {
+  formatAmountWithCurrency,
+  formatDuration,
+  formatInitials,
+  formatSchedule,
+  formatTimelineDate,
+  getCandidateColor,
+  getCandidateTier,
+  mapStatusPresentation,
+} from "./adminReservationService";
 import { ReservationRepository } from "./reservationRepository";
 import { BookingAccessRecord, BookingAccessRepository } from "./bookingAccessRepository";
 import { CounterPaymentRepository } from "./counterPaymentRepository";
@@ -60,7 +74,8 @@ export class ReservationMemoryRepository
     CounterPaymentRepository,
     StaffOperationsRepository,
     GuestReservationTrackingRepository,
-    ReportsRepository
+    ReportsRepository,
+    AdminReservationRepository
 {
   private reservations: ReservationResponseDTO[] = [];
   private paymentAttempts = new Map<string, StoredPaymentAttempt>();
@@ -1020,6 +1035,185 @@ export class ReservationMemoryRepository
       actorUserId: input.actorUserId,
       actorRole: input.actorRole,
     });
+  }
+
+  async listAdminReservations(): Promise<AdminReservationSummary[]> {
+    const list = [...this.reservations].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    return list.map((r) => {
+      const candidates = r.candidates ?? [];
+      const assignedCandidate = candidates.find((c) => c.isAssigned) ?? null;
+      const mainCandidate = candidates.find((c) => c.rank === 0) ?? candidates[0] ?? null;
+      const targetCandidate = assignedCandidate ?? mainCandidate;
+
+      const pres = mapStatusPresentation(r.status);
+      const customerName = `${r.customerFirstName} ${r.customerLastName}`.trim();
+      const customerInitials = formatInitials(r.customerFirstName, r.customerLastName);
+      const schedule = formatSchedule(targetCandidate?.startAt, targetCandidate?.endAt);
+
+      const workspaceDisplayName = assignedCandidate
+        ? assignedCandidate.workspaceInstanceId
+        : candidates.length > 1
+          ? "Multiple Candidates"
+          : mainCandidate?.workspaceInstanceId ?? "Unassigned";
+
+      return {
+        id: r.id,
+        referenceCode: r.referenceCode,
+        source: r.source,
+        customerFirstName: r.customerFirstName,
+        customerLastName: r.customerLastName,
+        customerName,
+        customerInitials,
+        customerEmail: r.customerEmail,
+        workspaceDisplayName,
+        workspaceInstanceCode: targetCandidate?.workspaceInstanceId ?? null,
+        workspaceTemplateName: null,
+        floorName: null,
+        schedule,
+        startAt: targetCandidate?.startAt ?? null,
+        endAt: targetCandidate?.endAt ?? null,
+        paymentStatus: pres.payment,
+        paymentColor: pres.paymentColor,
+        reservationStatus: r.status,
+        status: pres.label,
+        statusStyle: pres.style,
+        mark: pres.mark,
+        amountDue: r.amountDue,
+        currency: r.currency,
+        createdAt: r.createdAt,
+        confirmedAt: r.confirmedAt,
+        checkedInAt: r.checkedInAt,
+        checkedOutAt: r.checkedOutAt,
+      };
+    });
+  }
+
+  async getAdminReservationDetail(idOrReferenceCode: string): Promise<AdminReservationDetail | null> {
+    const r = this.reservations.find(
+      (entry) =>
+        entry.id === idOrReferenceCode ||
+        entry.referenceCode.toLowerCase() === idOrReferenceCode.toLowerCase()
+    );
+
+    if (!r) {
+      return null;
+    }
+
+    const candidateList = [...(r.candidates ?? [])].sort((a, b) => a.rank - b.rank);
+    const assigned = candidateList.find((c) => c.isAssigned) ?? null;
+    const main = candidateList.find((c) => c.rank === 0) ?? candidateList[0] ?? null;
+    const effective = assigned ?? main;
+
+    const pres = mapStatusPresentation(r.status);
+    const customerName = `${r.customerFirstName} ${r.customerLastName}`.trim();
+    const customerInitials = formatInitials(r.customerFirstName, r.customerLastName);
+    const schedule = formatSchedule(effective?.startAt, effective?.endAt);
+    const duration = formatDuration(effective?.startAt, effective?.endAt);
+
+    const candidates: AdminReservationCandidateSummary[] = candidateList.map((c) => ({
+      id: c.id,
+      rank: c.rank,
+      tier: getCandidateTier(c.rank),
+      workspaceInstanceId: c.workspaceInstanceId,
+      workspaceDisplayName: c.workspaceInstanceId,
+      workspaceInstanceCode: c.workspaceInstanceId,
+      workspaceTemplateName: "Workspace",
+      floorName: "Floor 1",
+      startAt: c.startAt,
+      endAt: c.endAt,
+      schedule: formatSchedule(c.startAt, c.endAt),
+      isAssigned: c.isAssigned,
+      color: getCandidateColor(c.rank),
+    }));
+
+    const assignedCandidate: AdminReservationCandidateSummary | null = assigned
+      ? {
+          id: assigned.id,
+          rank: assigned.rank,
+          tier: getCandidateTier(assigned.rank),
+          workspaceInstanceId: assigned.workspaceInstanceId,
+          workspaceDisplayName: assigned.workspaceInstanceId,
+          workspaceInstanceCode: assigned.workspaceInstanceId,
+          workspaceTemplateName: "Workspace",
+          floorName: "Floor 1",
+          startAt: assigned.startAt,
+          endAt: assigned.endAt,
+          schedule: formatSchedule(assigned.startAt, assigned.endAt),
+          isAssigned: true,
+          color: getCandidateColor(assigned.rank),
+        }
+      : null;
+
+    // Timeline building
+    const timeline: string[] = [];
+    timeline.push(
+      `${formatTimelineDate(r.createdAt)} - Reservation requested (${r.source === "KIOSK" ? "Kiosk" : "Web"})`
+    );
+
+    // Check payment attempts for proof
+    const attempts = Array.from(this.paymentAttempts.values()).filter((a) => a.reservationId === r.id);
+    const proofAttempt = attempts.find((a) => a.proofSubmittedAt !== null);
+    if (proofAttempt?.proofSubmittedAt) {
+      timeline.push(`${formatTimelineDate(proofAttempt.proofSubmittedAt)} - Payment proof uploaded`);
+    }
+
+    if (r.confirmedAt) {
+      timeline.push(
+        `${formatTimelineDate(r.confirmedAt)} - Payment approved & Allocated to ${assignedCandidate?.workspaceDisplayName ?? "spot"}`
+      );
+    }
+
+    if (r.checkedInAt) {
+      timeline.push(`${formatTimelineDate(r.checkedInAt)} - Customer checked in`);
+    }
+
+    if (r.checkedOutAt) {
+      timeline.push(`${formatTimelineDate(r.checkedOutAt)} - Customer checked out`);
+    }
+
+    if (r.status === "CANCELLED") {
+      timeline.push(`${formatTimelineDate(r.updatedAt)} - Reservation cancelled`);
+    } else if (r.status === "EXPIRED") {
+      timeline.push(`${formatTimelineDate(r.updatedAt)} - Payment session expired`);
+    } else if (r.status === "NEEDS_MANUAL_RESOLUTION") {
+      timeline.push(`${formatTimelineDate(r.updatedAt)} - Needs manual resolution`);
+    }
+
+    const formattedPaymentStatus = `${pres.payment} (${formatAmountWithCurrency(r.amountDue, r.currency)})`;
+
+    return {
+      id: r.id,
+      referenceCode: r.referenceCode,
+      source: r.source,
+      customerFirstName: r.customerFirstName,
+      customerLastName: r.customerLastName,
+      customerName,
+      customerInitials,
+      customerEmail: r.customerEmail,
+      reservationStatus: r.status,
+      status: pres.label,
+      statusStyle: pres.style,
+      mark: pres.mark,
+      schedule,
+      duration,
+      paymentStatus: formattedPaymentStatus,
+      paymentColor: pres.paymentColor,
+      amountDue: r.amountDue,
+      currency: r.currency,
+      rateSnapshot: r.rateSnapshot,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      confirmedAt: r.confirmedAt,
+      checkedInAt: r.checkedInAt,
+      checkedOutAt: r.checkedOutAt,
+      qrIssuedAt: r.qrIssuedAt,
+      qrRevokedAt: r.qrRevokedAt,
+      hasBookingQr: Boolean(r.qrIssuedAt && !r.qrRevokedAt),
+      assignedCandidate,
+      candidates,
+      timeline,
+    };
   }
 }
 

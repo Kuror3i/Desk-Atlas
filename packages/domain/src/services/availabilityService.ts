@@ -205,7 +205,7 @@ function buildIntervalSlots(input: {
     const startTime = formatMinutes(startMinutes);
     const endTime = formatMinutes(endMinutes);
     const slotStart = zonedDateTimeToUtc(input.date, startTime, input.timezone);
-    const slotEnd = zonedDateTimeToUtc(input.date, endTime, input.timezone);
+    const slotEnd = new Date(slotStart.getTime() + input.durationMinutes * 60_000);
 
     const blockingReason = getSlotBlockingReason(
       slotStart,
@@ -346,6 +346,9 @@ function parseTimeToMinutes(value: string): number {
 }
 
 function formatMinutes(totalMinutes: number): string {
+  if (totalMinutes === MINUTES_PER_DAY) {
+    return '24:00';
+  }
   const normalized = ((totalMinutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   const hours = Math.floor(normalized / 60);
   const minutes = normalized % 60;

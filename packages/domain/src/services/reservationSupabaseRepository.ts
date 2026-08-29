@@ -1,5 +1,9 @@
 import {
+  AdminReservationCandidateSummary,
+  AdminReservationDetail,
+  AdminReservationSummary,
   BookingAccessState,
+  CandidateRank,
   CounterPaymentRecord,
   CreateReservationRequest,
   OperationalActivityRecord,
@@ -15,6 +19,17 @@ import {
   ReservationResponseDTO,
   StaffOperationalReservation,
 } from "../models/reservation";
+import { AdminReservationRepository } from "./adminReservationRepository";
+import {
+  formatAmountWithCurrency,
+  formatDuration,
+  formatInitials,
+  formatSchedule,
+  formatTimelineDate,
+  getCandidateColor,
+  getCandidateTier,
+  mapStatusPresentation,
+} from "./adminReservationService";
 import {
   ReportPaymentAttemptRecord,
   ReportReservationRecord,
@@ -40,7 +55,8 @@ export class ReservationSupabaseRepository
     CounterPaymentRepository,
     StaffOperationsRepository,
     GuestReservationTrackingRepository,
-    ReportsRepository
+    ReportsRepository,
+    AdminReservationRepository
 {
   private readonly restUrl: string;
   private readonly serviceRoleKey: string;
@@ -694,16 +710,67 @@ export class ReservationSupabaseRepository
   }
 
   async listReportReservations(): Promise<ReportReservationRecord[]> {
-    const reservations = await this.request<any[]>(
-      "/reservations?select=*&order=created_at.desc&limit=500"
-    );
+    const [reservations, candidatesRows, instancesRows, templatesRows, floorsRows] =
+      await Promise.all([
+        this.request<any[]>("/reservations?select=*&order=created_at.desc&limit=500"),
+        this.request<any[]>("/reservation_candidates?select=*&order=rank.asc"),
+        this.request<any[]>("/workspace_instances?select=*"),
+        this.request<any[]>("/workspace_templates?select=*"),
+        this.request<any[]>("/floors?select=*"),
+      ]);
 
-    const reports = await Promise.all(
-      reservations.map((reservation) => this.loadReportReservation(reservation.id, reservation))
-    );
+    if (!reservations || reservations.length === 0) {
+      return [];
+    }
 
-    return reports
-      .filter((report): report is ReportReservationRecord => report !== null)
+    const candidatesByReservation = new Map<string, any[]>();
+    for (const c of candidatesRows ?? []) {
+      const list = candidatesByReservation.get(c.reservation_id) ?? [];
+      list.push(c);
+      candidatesByReservation.set(c.reservation_id, list);
+    }
+
+    const instancesById = new Map<string, any>((instancesRows ?? []).map((i) => [i.id, i]));
+    const templatesById = new Map<string, any>((templatesRows ?? []).map((t) => [t.id, t]));
+    const floorsById = new Map<string, any>((floorsRows ?? []).map((f) => [f.id, f]));
+
+    return reservations
+      .map((r) => {
+        const candidateList = candidatesByReservation.get(r.id) ?? [];
+        const assignedCandidate =
+          candidateList.find((entry) => entry.is_assigned === true) ?? candidateList[0] ?? null;
+        const workspaceInstance = assignedCandidate
+          ? instancesById.get(assignedCandidate.workspace_instance_id)
+          : null;
+        const workspaceTemplate = workspaceInstance
+          ? templatesById.get(workspaceInstance.template_id)
+          : null;
+        const floor = workspaceInstance ? floorsById.get(workspaceInstance.floor_id) : null;
+
+        return {
+          reservationId: r.id,
+          referenceCode: r.reference_code,
+          source: r.source,
+          customerFirstName: r.customer_first_name,
+          customerLastName: r.customer_last_name,
+          customerEmail: r.customer_email,
+          reservationStatus: r.status,
+          amountDue: Number(r.amount_due),
+          currency: r.currency,
+          createdAt: r.created_at,
+          confirmedAt: r.confirmed_at,
+          checkedInAt: r.checked_in_at,
+          checkedOutAt: r.checked_out_at,
+          bookingStartAt: assignedCandidate?.start_at ?? null,
+          bookingEndAt: assignedCandidate?.end_at ?? null,
+          assignedCandidateRank: assignedCandidate?.is_assigned ? assignedCandidate.rank : null,
+          workspaceDisplayName:
+            workspaceInstance?.display_name ?? workspaceInstance?.instance_code ?? null,
+          workspaceInstanceCode: workspaceInstance?.instance_code ?? null,
+          workspaceTemplateName: workspaceTemplate?.name ?? null,
+          floorName: floor?.name ?? null,
+        } satisfies ReportReservationRecord;
+      })
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
@@ -889,13 +956,36 @@ export class ReservationSupabaseRepository
     paymentAttemptId: string,
     attemptRow?: any
   ): Promise<PaymentReviewDetail | null> {
-    const attempt =
-      attemptRow ??
-      (
-        await this.request<any[]>(
-          `/payment_attempts?select=*&id=eq.${encodeURIComponent(paymentAttemptId)}&limit=1`
-        )
-      )?.[0];
+    let attempt = attemptRow;
+    if (!attempt) {
+      const attempts = await this.request<any[]>(
+        `/payment_attempts?select=*&id=eq.${encodeURIComponent(paymentAttemptId)}&limit=1`
+      );
+      if (attempts && attempts.length > 0) {
+        attempt = attempts[0];
+      } else {
+        // Fallback: check if identifier is reservation_id
+        const resAttempts = await this.request<any[]>(
+          `/payment_attempts?select=*&reservation_id=eq.${encodeURIComponent(paymentAttemptId)}&order=created_at.desc&limit=1`
+        );
+        if (resAttempts && resAttempts.length > 0) {
+          attempt = resAttempts[0];
+        } else {
+          // Fallback: check if identifier is reservation reference_code
+          const res = await this.request<any[]>(
+            `/reservations?select=id&reference_code=eq.${encodeURIComponent(paymentAttemptId)}&limit=1`
+          );
+          if (res && res.length > 0) {
+            const byRefAttempts = await this.request<any[]>(
+              `/payment_attempts?select=*&reservation_id=eq.${encodeURIComponent(res[0].id)}&order=created_at.desc&limit=1`
+            );
+            if (byRefAttempts && byRefAttempts.length > 0) {
+              attempt = byRefAttempts[0];
+            }
+          }
+        }
+      }
+    }
 
     if (!attempt) {
       return null;
@@ -919,15 +1009,69 @@ export class ReservationSupabaseRepository
       `/reservation_candidates?select=*&reservation_id=eq.${encodeURIComponent(reservation.id)}&order=rank.asc`
     );
 
-    const candidates: ReservationCandidate[] = candidatesRows.map((candidate: any) => ({
-      id: candidate.id,
-      reservationId: candidate.reservation_id,
-      rank: candidate.rank,
-      workspaceInstanceId: candidate.workspace_instance_id,
-      startAt: candidate.start_at,
-      endAt: candidate.end_at,
-      isAssigned: candidate.is_assigned,
-    }));
+    const instanceIds = candidatesRows
+      .map((c: any) => c.workspace_instance_id)
+      .filter((id: any): id is string => Boolean(id));
+
+    let instancesById = new Map<string, any>();
+    let templatesById = new Map<string, any>();
+    let floorsById = new Map<string, any>();
+
+    if (instanceIds.length > 0) {
+      const uniqueInstanceIds = Array.from(new Set(instanceIds));
+      const instances = await this.request<any[]>(
+        `/workspace_instances?select=*&id=in.(${uniqueInstanceIds.map(encodeURIComponent).join(",")})`
+      );
+      if (instances && Array.isArray(instances)) {
+        instancesById = new Map(instances.map((i: any) => [i.id, i]));
+        const templateIds = Array.from(
+          new Set(instances.map((i: any) => i.template_id).filter(Boolean))
+        );
+        const floorIds = Array.from(
+          new Set(instances.map((i: any) => i.floor_id).filter(Boolean))
+        );
+
+        if (templateIds.length > 0) {
+          const templates = await this.request<any[]>(
+            `/workspace_templates?select=*&id=in.(${templateIds.map(encodeURIComponent).join(",")})`
+          );
+          if (templates && Array.isArray(templates)) {
+            templatesById = new Map(templates.map((t: any) => [t.id, t]));
+          }
+        }
+
+        if (floorIds.length > 0) {
+          const floors = await this.request<any[]>(
+            `/floors?select=*&id=in.(${floorIds.map(encodeURIComponent).join(",")})`
+          );
+          if (floors && Array.isArray(floors)) {
+            floorsById = new Map(floors.map((f: any) => [f.id, f]));
+          }
+        }
+      }
+    }
+
+    const candidates: ReservationCandidate[] = candidatesRows.map((candidate: any) => {
+      const instance = instancesById.get(candidate.workspace_instance_id);
+      const template = instance ? templatesById.get(instance.template_id) : null;
+      const floor = instance ? floorsById.get(instance.floor_id) : null;
+
+      return {
+        id: candidate.id,
+        reservationId: candidate.reservation_id,
+        rank: candidate.rank,
+        workspaceInstanceId: candidate.workspace_instance_id,
+        startAt: candidate.start_at,
+        endAt: candidate.end_at,
+        isAssigned: candidate.is_assigned,
+        workspaceDisplayName:
+          instance?.display_name ?? instance?.instance_code ?? candidate.workspace_instance_id,
+        workspaceInstanceCode:
+          instance?.instance_code ?? candidate.workspace_instance_id,
+        workspaceTemplateName: template?.name ?? undefined,
+        floorName: floor?.name ?? undefined,
+      };
+    });
 
     return {
       paymentAttemptId: attempt.id,
@@ -1116,6 +1260,225 @@ export class ReservationSupabaseRepository
       workspaceInstanceCode: workspaceInstance?.instance_code ?? null,
       workspaceTemplateName: workspaceTemplate?.name ?? null,
       floorName: floor?.name ?? null,
+    };
+  }
+
+  async listAdminReservations(): Promise<AdminReservationSummary[]> {
+    const reservations = await this.request<any[]>(
+      "/reservations?select=*&order=created_at.desc&limit=500"
+    );
+
+    if (!reservations || reservations.length === 0) {
+      return [];
+    }
+
+    const [candidatesRows, instancesRows, templatesRows, floorsRows] =
+      await Promise.all([
+        this.request<any[]>("/reservation_candidates?select=*&order=rank.asc"),
+        this.request<any[]>("/workspace_instances?select=*"),
+        this.request<any[]>("/workspace_templates?select=*"),
+        this.request<any[]>("/floors?select=*"),
+      ]);
+
+    const candidatesByReservation = new Map<string, any[]>();
+    for (const c of candidatesRows ?? []) {
+      const list = candidatesByReservation.get(c.reservation_id) ?? [];
+      list.push(c);
+      candidatesByReservation.set(c.reservation_id, list);
+    }
+
+    const instancesById = new Map<string, any>((instancesRows ?? []).map((i) => [i.id, i]));
+    const templatesById = new Map<string, any>((templatesRows ?? []).map((t) => [t.id, t]));
+    const floorsById = new Map<string, any>((floorsRows ?? []).map((f) => [f.id, f]));
+
+    return reservations.map((r) => {
+      const candidates = candidatesByReservation.get(r.id) ?? [];
+      const assignedCandidate = candidates.find((c) => c.is_assigned === true) ?? null;
+      const mainCandidate = candidates.find((c) => c.rank === 0) ?? candidates[0] ?? null;
+      const targetCandidate = assignedCandidate ?? mainCandidate;
+
+      const instance = targetCandidate ? instancesById.get(targetCandidate.workspace_instance_id) : null;
+      const template = instance ? templatesById.get(instance.template_id) : null;
+      const floor = instance ? floorsById.get(instance.floor_id) : null;
+
+      const pres = mapStatusPresentation(r.status);
+      const customerName = `${r.customer_first_name} ${r.customer_last_name}`.trim();
+      const customerInitials = formatInitials(r.customer_first_name, r.customer_last_name);
+      const schedule = formatSchedule(targetCandidate?.start_at, targetCandidate?.end_at);
+
+      const workspaceDisplayName = assignedCandidate
+        ? (instance?.display_name ?? instance?.instance_code ?? targetCandidate?.workspace_instance_id ?? "Assigned Workspace")
+        : candidates.length > 1
+          ? "Multiple Candidates"
+          : (instance?.display_name ?? instance?.instance_code ?? template?.name ?? "Unassigned");
+
+      return {
+        id: r.id,
+        referenceCode: r.reference_code,
+        source: r.source,
+        customerFirstName: r.customer_first_name,
+        customerLastName: r.customer_last_name,
+        customerName,
+        customerInitials,
+        customerEmail: r.customer_email,
+        workspaceDisplayName,
+        workspaceInstanceCode: instance?.instance_code ?? null,
+        workspaceTemplateName: template?.name ?? null,
+        floorName: floor?.name ?? null,
+        schedule,
+        startAt: targetCandidate?.start_at ?? null,
+        endAt: targetCandidate?.end_at ?? null,
+        paymentStatus: pres.payment,
+        paymentColor: pres.paymentColor,
+        reservationStatus: r.status,
+        status: pres.label,
+        statusStyle: pres.style,
+        mark: pres.mark,
+        amountDue: Number(r.amount_due),
+        currency: r.currency,
+        createdAt: r.created_at,
+        confirmedAt: r.confirmed_at,
+        checkedInAt: r.checked_in_at,
+        checkedOutAt: r.checked_out_at,
+      };
+    });
+  }
+
+  async getAdminReservationDetail(idOrReferenceCode: string): Promise<AdminReservationDetail | null> {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrReferenceCode);
+    const filter = isUuid
+      ? `id=eq.${encodeURIComponent(idOrReferenceCode)}`
+      : `reference_code=eq.${encodeURIComponent(idOrReferenceCode)}`;
+
+    const reservationRows = await this.request<any[]>(
+      `/reservations?select=*&${filter}&limit=1`
+    );
+
+    if (!reservationRows || reservationRows.length === 0) {
+      return null;
+    }
+
+    const r = reservationRows[0];
+
+    const [candidateRows, instancesRows, templatesRows, floorsRows, paymentAttempts] =
+      await Promise.all([
+        this.request<any[]>(
+          `/reservation_candidates?select=*&reservation_id=eq.${encodeURIComponent(r.id)}&order=rank.asc`
+        ),
+        this.request<any[]>("/workspace_instances?select=*"),
+        this.request<any[]>("/workspace_templates?select=*"),
+        this.request<any[]>("/floors?select=*"),
+        this.request<any[]>(
+          `/payment_attempts?select=*&reservation_id=eq.${encodeURIComponent(r.id)}&order=created_at.desc`
+        ),
+      ]);
+
+    const instancesById = new Map<string, any>((instancesRows ?? []).map((i) => [i.id, i]));
+    const templatesById = new Map<string, any>((templatesRows ?? []).map((t) => [t.id, t]));
+    const floorsById = new Map<string, any>((floorsRows ?? []).map((f) => [f.id, f]));
+
+    const candidateList = (candidateRows ?? []).map((c) => {
+      const instance = instancesById.get(c.workspace_instance_id);
+      const template = instance ? templatesById.get(instance.template_id) : null;
+      const floor = instance ? floorsById.get(instance.floor_id) : null;
+
+      const rank = c.rank as CandidateRank;
+      const displayName = instance?.display_name ?? instance?.instance_code ?? template?.name ?? c.workspace_instance_id;
+
+      return {
+        id: c.id,
+        rank,
+        tier: getCandidateTier(rank),
+        workspaceInstanceId: c.workspace_instance_id,
+        workspaceDisplayName: displayName,
+        workspaceInstanceCode: instance?.instance_code ?? null,
+        workspaceTemplateName: template?.name ?? null,
+        floorName: floor?.name ?? null,
+        startAt: c.start_at,
+        endAt: c.end_at,
+        schedule: formatSchedule(c.start_at, c.end_at),
+        isAssigned: Boolean(c.is_assigned),
+        color: getCandidateColor(rank),
+      } satisfies AdminReservationCandidateSummary;
+    });
+
+    const assigned = candidateList.find((c) => c.isAssigned) ?? null;
+    const main = candidateList.find((c) => c.rank === 0) ?? candidateList[0] ?? null;
+    const effective = assigned ?? main;
+
+    const pres = mapStatusPresentation(r.status);
+    const customerName = `${r.customer_first_name} ${r.customer_last_name}`.trim();
+    const customerInitials = formatInitials(r.customer_first_name, r.customer_last_name);
+    const schedule = formatSchedule(effective?.startAt, effective?.endAt);
+    const duration = formatDuration(effective?.startAt, effective?.endAt);
+
+    // Timeline building
+    const timeline: string[] = [];
+    timeline.push(
+      `${formatTimelineDate(r.created_at)} - Reservation requested (${r.source === "KIOSK" ? "Kiosk" : "Web"})`
+    );
+
+    const proofAttempt = (paymentAttempts ?? []).find((a) => a.proof_submitted_at !== null);
+    if (proofAttempt?.proof_submitted_at) {
+      timeline.push(`${formatTimelineDate(proofAttempt.proof_submitted_at)} - Payment proof uploaded`);
+    }
+
+    if (r.confirmed_at) {
+      timeline.push(
+        `${formatTimelineDate(r.confirmed_at)} - Payment approved & Allocated to ${assigned?.workspaceDisplayName ?? "spot"}`
+      );
+    }
+
+    if (r.checked_in_at) {
+      timeline.push(`${formatTimelineDate(r.checked_in_at)} - Customer checked in`);
+    }
+
+    if (r.checked_out_at) {
+      timeline.push(`${formatTimelineDate(r.checked_out_at)} - Customer checked out`);
+    }
+
+    if (r.status === "CANCELLED") {
+      timeline.push(`${formatTimelineDate(r.updated_at)} - Reservation cancelled`);
+    } else if (r.status === "EXPIRED") {
+      timeline.push(`${formatTimelineDate(r.updated_at)} - Payment session expired`);
+    } else if (r.status === "NEEDS_MANUAL_RESOLUTION") {
+      timeline.push(`${formatTimelineDate(r.updated_at)} - Needs manual resolution`);
+    }
+
+    const amountDue = Number(r.amount_due);
+    const formattedPaymentStatus = `${pres.payment} (${formatAmountWithCurrency(amountDue, r.currency)})`;
+
+    return {
+      id: r.id,
+      referenceCode: r.reference_code,
+      source: r.source,
+      customerFirstName: r.customer_first_name,
+      customerLastName: r.customer_last_name,
+      customerName,
+      customerInitials,
+      customerEmail: r.customer_email,
+      reservationStatus: r.status,
+      status: pres.label,
+      statusStyle: pres.style,
+      mark: pres.mark,
+      schedule,
+      duration,
+      paymentStatus: formattedPaymentStatus,
+      paymentColor: pres.paymentColor,
+      amountDue,
+      currency: r.currency,
+      rateSnapshot: Number(r.rate_snapshot),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      confirmedAt: r.confirmed_at,
+      checkedInAt: r.checked_in_at,
+      checkedOutAt: r.checked_out_at,
+      qrIssuedAt: r.qr_issued_at,
+      qrRevokedAt: r.qr_revoked_at,
+      hasBookingQr: Boolean(r.qr_issued_at && !r.qr_revoked_at),
+      assignedCandidate: assigned,
+      candidates: candidateList,
+      timeline,
     };
   }
 }

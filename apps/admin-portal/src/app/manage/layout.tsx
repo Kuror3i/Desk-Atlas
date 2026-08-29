@@ -14,27 +14,70 @@ function AdminShell({ children }: { children: React.ReactNode }) {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
+  const [reservationsCount, setReservationsCount] = useState<number>(0);
+  const [paymentsCount, setPaymentsCount] = useState<number>(0);
+
   useEffect(() => {
-    if (user === null) {
+    if (!user) return;
+
+    let isCancelled = false;
+
+    async function fetchBadgeCounts() {
+      try {
+        const [resRes, payRes] = await Promise.allSettled([
+          fetch('/api/admin/reservations?filter=awaiting_proof', { cache: 'no-store' }),
+          fetch('/api/admin/payments/reviews', { cache: 'no-store' }),
+        ]);
+
+        if (resRes.status === 'fulfilled' && resRes.value.ok) {
+          const resData = await resRes.value.json();
+          if (!isCancelled) {
+            const count = typeof resData.total === 'number' ? resData.total : (Array.isArray(resData.reservations) ? resData.reservations.length : 0);
+            setReservationsCount(count);
+          }
+        }
+
+        if (payRes.status === 'fulfilled' && payRes.value.ok) {
+          const payData = await payRes.value.json();
+          if (!isCancelled) {
+            const count = Array.isArray(payData.queue) ? payData.queue.length : 0;
+            setPaymentsCount(count);
+          }
+        }
+      } catch {
+        // Silently ignore badge count fetch errors
+      }
+    }
+
+    fetchBadgeCounts();
+    const interval = setInterval(fetchBadgeCounts, 15000);
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, pathname]);
+
+  useEffect(() => {
+    if (!loading && user === null) {
       router.push('/manage/login');
     }
-  }, [user, router]);
+  }, [user, loading, router]);
 
-  if (user === null) {
-    return null; // redirecting
+  if (loading || user === null) {
+    return null; // loading or redirecting
   }
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
   const navItems = [
     { id: '/manage', label: 'Dashboard', iconType: 'dashboard' },
-    { id: '/manage/reservations', label: 'Reservations', iconType: 'reservations', badge: 2 },
+    { id: '/manage/reservations', label: 'Reservations', iconType: 'reservations', badge: reservationsCount > 0 ? reservationsCount : undefined },
     { id: '/manage/workspace-map', label: 'Workspace Map', iconType: 'map' },
-    { id: '/manage/payments', label: 'Payments', iconType: 'payments', badge: 3 },
+    { id: '/manage/payments', label: 'Payments', iconType: 'payments', badge: paymentsCount > 0 ? paymentsCount : undefined },
     { id: '/manage/workspaces', label: 'Workspaces', iconType: 'workspaces' },
     { id: '/manage/map', label: 'Map Builder', iconType: 'map' },
     { id: '/manage/staff', label: 'Staff', iconType: 'staff' },
@@ -153,7 +196,7 @@ function AdminShell({ children }: { children: React.ReactNode }) {
                 >
                   {getIcon(item.iconType, isActive)}
                   {sidebarOpen && <span>{item.label}</span>}
-                  {sidebarOpen && item.badge && (
+                  {sidebarOpen && typeof item.badge === 'number' && item.badge > 0 && (
                     <span style={{ marginLeft: 'auto', fontSize: '10px', fontWeight: 800, background: '#FFF0CC', color: 'var(--da-brand-dark)', borderRadius: '9999px', whiteSpace: 'nowrap', padding: '2px 7px' }}>
                       {item.badge}
                     </span>
