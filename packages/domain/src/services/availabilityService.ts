@@ -5,6 +5,9 @@ import type {
   OperatingHoursInterval,
   TimeAvailabilityQuery,
   TimeAvailabilityResult,
+  TemplateAvailabilityQuery,
+  TemplateAvailabilityResult,
+  AvailableInstanceSummary,
   AvailableDate,
   AvailableTimeSlot,
   ScheduleBlock,
@@ -82,6 +85,122 @@ export function createAvailabilityService(repository: AvailabilityRepository) {
         workspaceIsBookable: workspaceAvailability.isBookable,
         workspaceBlockingReason: workspaceAvailability.blockingReason,
         slots,
+      };
+    },
+
+    async listTemplateAvailability(query: TemplateAvailabilityQuery): Promise<TemplateAvailabilityResult> {
+      const normalized = normalizeTemplateAvailabilityQuery(query);
+      if (!repository.listWorkspaceInstancesByTemplate) {
+        throw new Error('Repository does not support listWorkspaceInstancesByTemplate');
+      }
+
+      const instances = await repository.listWorkspaceInstancesByTemplate(normalized.templateId);
+      if (instances.length === 0) {
+        throw new AvailabilityValidationError(
+          `No active instances found for template: ${normalized.templateId}`
+        );
+      }
+
+      const templateName = instances[0].template.name;
+      const settings = await repository.getBusinessSettings();
+      const now = normalized.nowIso ? new Date(normalized.nowIso) : new Date();
+
+      const allInstances: AvailableInstanceSummary[] = [];
+
+      for (const instance of instances) {
+        const workspaceAvailability = getWorkspaceAvailabilityStatus(instance);
+        const photoPosition = (instance.template.defaultStyle as any)?.photoPosition;
+
+        if (!workspaceAvailability.isBookable) {
+          allInstances.push({
+            workspaceInstanceId: instance.id,
+            templateId: instance.templateId,
+            floorId: instance.floorId,
+            floorName: instance.floor.name,
+            instanceCode: instance.instanceCode,
+            displayName: instance.displayName,
+            templateName: instance.template.name,
+            rateAmount: instance.template.rateAmount,
+            capacity: instance.template.capacity,
+            photoPath: instance.template.photoPath,
+            photoPosition: photoPosition && typeof photoPosition === 'object' ? photoPosition : undefined,
+            operationalStatus: instance.operationalStatus,
+            isAvailable: false,
+            blockingReason: workspaceAvailability.blockingReason || instance.operationalStatus,
+          });
+          continue;
+        }
+
+        const slots = await listTimeSlotsForDate(
+          repository,
+          settings,
+          true,
+          instance.id,
+          normalized.date,
+          normalized.durationMinutes,
+          now,
+          normalized.startTime
+        );
+
+        if (normalized.startTime) {
+          const targetSlot = slots.find((s) => s.startTime === normalized.startTime);
+          const isAvailable = Boolean(targetSlot && targetSlot.isAvailable);
+          const blockingReason = isAvailable ? null : (targetSlot?.blockingReason ?? 'UNAVAILABLE');
+
+          allInstances.push({
+            workspaceInstanceId: instance.id,
+            templateId: instance.templateId,
+            floorId: instance.floorId,
+            floorName: instance.floor.name,
+            instanceCode: instance.instanceCode,
+            displayName: instance.displayName,
+            templateName: instance.template.name,
+            rateAmount: instance.template.rateAmount,
+            capacity: instance.template.capacity,
+            photoPath: instance.template.photoPath,
+            photoPosition: photoPosition && typeof photoPosition === 'object' ? photoPosition : undefined,
+            operationalStatus: instance.operationalStatus,
+            isAvailable,
+            blockingReason,
+          });
+        } else {
+          const hasAnyAvailable = slots.some((s) => s.isAvailable);
+          allInstances.push({
+            workspaceInstanceId: instance.id,
+            templateId: instance.templateId,
+            floorId: instance.floorId,
+            floorName: instance.floor.name,
+            instanceCode: instance.instanceCode,
+            displayName: instance.displayName,
+            templateName: instance.template.name,
+            rateAmount: instance.template.rateAmount,
+            capacity: instance.template.capacity,
+            photoPath: instance.template.photoPath,
+            photoPosition: photoPosition && typeof photoPosition === 'object' ? photoPosition : undefined,
+            operationalStatus: instance.operationalStatus,
+            isAvailable: hasAnyAvailable,
+            blockingReason: hasAnyAvailable ? null : 'NO_TIME_REMAINING',
+          });
+        }
+      }
+
+      let endTime: string | null = null;
+      if (normalized.startTime) {
+        const startMinutes = parseTimeToMinutes(normalized.startTime);
+        endTime = formatMinutes(startMinutes + normalized.durationMinutes);
+      }
+
+      return {
+        templateId: normalized.templateId,
+        templateName,
+        date: normalized.date,
+        durationMinutes: normalized.durationMinutes,
+        startTime: normalized.startTime ?? null,
+        endTime,
+        timezone: settings.timezone,
+        bookingIntervalMinutes: settings.bookingIntervalMinutes,
+        availableInstances: allInstances.filter((i) => i.isAvailable),
+        allInstances,
       };
     },
   };
@@ -386,6 +505,28 @@ function normalizeTimeAvailabilityQuery(query: TimeAvailabilityQuery): Required<
     durationMinutes: requirePositiveMinutes(query.durationMinutes, 'Duration'),
     nowIso: query.nowIso ?? new Date().toISOString(),
     customStartTime,
+  };
+}
+
+function normalizeTemplateAvailabilityQuery(query: TemplateAvailabilityQuery): Required<Omit<TemplateAvailabilityQuery, 'startTime'>> & {
+  startTime?: string;
+} {
+  let startTime: string | undefined = undefined;
+  if (query.startTime && query.startTime.trim().length > 0) {
+    const trimmed = query.startTime.trim();
+    if (!/^(\d{1,2}):(\d{2})(?::\d{2})?$/.test(trimmed)) {
+      throw new AvailabilityValidationError(`Invalid start time: ${trimmed}`);
+    }
+    const [h, m] = trimmed.split(':');
+    startTime = `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+  }
+
+  return {
+    templateId: requireNonBlank(query.templateId, 'Template id'),
+    date: requireDateString(query.date, 'Date'),
+    durationMinutes: requirePositiveMinutes(query.durationMinutes, 'Duration'),
+    nowIso: query.nowIso ?? new Date().toISOString(),
+    startTime,
   };
 }
 

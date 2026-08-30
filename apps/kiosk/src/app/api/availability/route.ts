@@ -11,9 +11,24 @@ export async function GET(request: NextRequest) {
   try {
     const service = createAvailabilityService(new SupabaseAvailabilityRepository());
     const searchParams = request.nextUrl.searchParams;
+    const templateId = searchParams.get('templateId');
     const workspaceInstanceId = searchParams.get('workspaceInstanceId') ?? '';
     const durationMinutes = Number(searchParams.get('durationMinutes') ?? '');
     const nowIso = searchParams.get('nowIso') ?? undefined;
+
+    if (templateId) {
+      const result = await service.listTemplateAvailability({
+        templateId,
+        date: searchParams.get('date') ?? '',
+        durationMinutes,
+        startTime:
+          searchParams.get('startTime') ??
+          searchParams.get('customStartTime') ??
+          undefined,
+        nowIso,
+      });
+      return NextResponse.json(result);
+    }
 
     if (searchParams.has('date')) {
       const result = await service.listTimeAvailability({

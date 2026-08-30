@@ -121,6 +121,27 @@ export class SupabaseAvailabilityRepository implements AvailabilityRepository {
     };
   }
 
+  async listWorkspaceInstancesByTemplate(templateId: string): Promise<WorkspaceInstanceDetails[]> {
+    const rows = await this.request<WorkspaceInstanceRow[]>(
+      `/workspace_instances?select=id,template_id,floor_id,instance_code,display_name,operational_status,template:workspace_templates(id,name,description,photo_path,capacity,rate_amount,pricing_unit,default_shape,default_color,default_style,is_active),floor:floors(id,name,floor_number,display_order,is_active)&template_id=eq.${encodeURIComponent(
+        templateId
+      )}&operational_status=neq.INACTIVE`
+    );
+
+    return rows
+      .filter((row) => row.template && row.floor && row.template.is_active && row.floor.is_active)
+      .map((row) => ({
+        id: row.id,
+        templateId: row.template_id,
+        floorId: row.floor_id,
+        instanceCode: row.instance_code,
+        displayName: row.display_name,
+        operationalStatus: row.operational_status,
+        template: mapWorkspaceTemplate(row.template!),
+        floor: mapFloor(row.floor!),
+      }));
+  }
+
   async getBusinessSettings(): Promise<BusinessAvailabilitySettings> {
     const rows = await this.request<BusinessSettingsRow[]>(
       '/business_settings?select=timezone,booking_interval_minutes&id=eq.1&limit=1'

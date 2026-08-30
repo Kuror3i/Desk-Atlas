@@ -15,9 +15,15 @@ export default function KioskStartPage() {
 
   return (
     <div style={{
-      width: "1080px", height: "1920px", margin: "0 auto", 
-      background: "#F3F7F4", position: "relative", overflow: "hidden", 
-      display: "flex", flexDirection: "column"
+      position: "fixed",
+      inset: 0,
+      width: "100vw",
+      height: "100svh",
+      margin: 0,
+      background: "#0C3B27",
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
     }}>
       <WelcomeScreen 
         onStart={() => router.push("/kiosk/reserve")} 

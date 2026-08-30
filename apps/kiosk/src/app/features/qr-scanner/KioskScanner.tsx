@@ -57,29 +57,49 @@ export function KioskScanner({ onCancel }: KioskScannerProps) {
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100%", background: "#F3F7F4", display: "flex", flexDirection: "column" }}>
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      width: "100vw",
+      height: "100svh",
+      overflow: "hidden",
+      background: "#0C3B27",
+      display: "flex",
+      flexDirection: "column",
+      color: "#FFFFFF"
+    }}>
       <header style={{
+        position: "absolute", top: 0, left: 0, right: 0, zIndex: 2,
         display: "flex", alignItems: "center", justifyContent: "space-between", 
-        padding: "32px 44px", background: "#FFFFFF", borderBottom: "1px solid #E1E9E3"
+        padding: "32px 44px", boxSizing: "border-box"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ width: "16px", height: "16px", borderRadius: "50%", background: "#C8F451" }}></div>
-          <span style={{ fontWeight: 800, fontSize: "26px", color: "#0C3B27" }}>DeskAtlas</span>
+          <span style={{ fontWeight: 800, fontSize: "26px", color: "#FFFFFF" }}>DeskAtlas</span>
         </div>
         <button onClick={onCancel} style={{
-          fontSize: "20px", fontWeight: 700, color: "#65736A", background: "none", 
-          border: "1px solid #DCE6DF", borderRadius: "9999px", padding: "14px 28px", cursor: "pointer"
+          fontSize: "20px", fontWeight: 700, color: "#FFFFFF", background: "rgba(255,255,255,0.08)", 
+          border: "1px solid rgba(255,255,255,0.32)", borderRadius: "9999px", padding: "14px 28px", cursor: "pointer"
         }}>
           Close
         </button>
       </header>
 
-      <main style={{ flex: 1, padding: "48px 60px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <h1 style={{ fontSize: "44px", fontWeight: 800, color: "#0C3B27", margin: "0 0 40px" }}>
+      <main style={{
+        flex: 1,
+        minHeight: 0,
+        padding: "120px 48px 48px",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center"
+      }}>
+        <h1 style={{ fontSize: "44px", fontWeight: 800, color: "#FFFFFF", margin: "0 0 40px" }}>
           Scan Booking QR
         </h1>
         
-        {loading && <div style={{ fontSize: "24px" }}>Looking up booking...</div>}
+        {loading && <div style={{ fontSize: "24px", color: "#FFFFFF" }}>Looking up booking...</div>}
         
         {error && (
           <div style={{ background: "#FFEBEE", color: "#C62828", padding: "20px", borderRadius: "12px", fontSize: "24px", marginBottom: "20px" }}>
@@ -106,8 +126,8 @@ export function KioskScanner({ onCancel }: KioskScannerProps) {
         <div 
           id="reader" 
           style={{ 
-            width: "500px", 
-            height: "500px", 
+            width: "min(500px, calc(100vw - 96px), calc(100svh - 260px))", 
+            aspectRatio: "1 / 1",
             background: "#000",
             display: (bookingData || error || loading) ? "none" : "block",
             borderRadius: "24px",

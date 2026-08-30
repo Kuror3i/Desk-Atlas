@@ -83,11 +83,19 @@ export async function POST(request: NextRequest) {
         candidates: body.candidates,
       };
     } else {
-      const date = body.date || new Date().toISOString().split("T")[0];
-      const startTime = body.startTime || "09:00:00";
-      const startAt = new Date(`${date}T${startTime}`).toISOString();
-      const durationMin = Number(body.durationMinutes) || 120;
-      const endAt = new Date(new Date(startAt).getTime() + durationMin * 60000).toISOString();
+      const now = new Date();
+      const durationMin = Number(body.durationMinutes) || (Number(body.durationHours) * 60) || 120;
+      let startAt: string;
+      if (body.startAt) {
+        startAt = new Date(body.startAt).toISOString();
+      } else if (body.date && body.startTime) {
+        startAt = new Date(`${body.date}T${body.startTime}`).toISOString();
+      } else {
+        startAt = now.toISOString();
+      }
+      const endAt = body.endAt
+        ? new Date(body.endAt).toISOString()
+        : new Date(new Date(startAt).getTime() + durationMin * 60000).toISOString();
 
       createRequest = {
         source: "KIOSK",

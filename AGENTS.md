@@ -20,6 +20,12 @@ Always use `docs/INDEX.md` as part of the operating instructions for:
 - frontend limitation documentation expectations
 - post-FM milestone-fix (`MF-*`) documentation and execution expectations
 
+Current post-FM customer/kiosk flow change requests are tracked in
+`docs/milestone-fixes/MF-40_KIOSK_FULLSCREEN_WELCOME.md`,
+`docs/milestone-fixes/MF-41_CUSTOMER_TEMPLATE_FIRST_RESERVE_FLOW.md`, and
+`docs/milestone-fixes/MF-42_KIOSK_TEMPLATE_FIRST_NOW_RESERVE_FLOW.md`.
+Read the matching MF file before implementing any of those requested changes.
+
 ## 1. Project Documentation Is Mandatory
 
 All authoritative DeskAtlas project documentation lives in:

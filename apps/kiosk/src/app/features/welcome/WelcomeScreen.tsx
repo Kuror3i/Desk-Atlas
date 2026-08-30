@@ -7,14 +7,15 @@ interface WelcomeScreenProps {
 
 export function WelcomeScreen({ onStart, onOpenScanner }: WelcomeScreenProps) {
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+    <div style={{ width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden", background: "#0C3B27" }}>
       <button 
         onClick={onStart} 
         data-screen-label="Kiosk Idle" 
         style={{
-          all: "unset", width: "100%", height: "100%", display: "flex", 
+          all: "unset", width: "100%", height: "100%", minHeight: 0, display: "flex", 
           flexDirection: "column", alignItems: "center", justifyContent: "center", 
-          background: "#0C3B27", cursor: "pointer", textAlign: "center"
+          background: "#0C3B27", cursor: "pointer", textAlign: "center",
+          boxSizing: "border-box", padding: "48px"
         }}
       >
         <div style={{
@@ -31,7 +32,8 @@ export function WelcomeScreen({ onStart, onOpenScanner }: WelcomeScreenProps) {
         </div>
         <div style={{
           fontSize: "32px", fontWeight: 800, color: "#C8F451", padding: "22px 52px", 
-          border: "3px solid #C8F451", borderRadius: "9999px"
+          border: "3px solid #C8F451", borderRadius: "9999px",
+          minHeight: "44px", display: "flex", alignItems: "center", justifyContent: "center"
         }}>
           Tap to Begin
         </div>

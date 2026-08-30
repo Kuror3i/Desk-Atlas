@@ -47,6 +47,7 @@ export interface AvailabilityRepository {
     rangeStartIso: string,
     rangeEndIso: string
   ): Promise<BlockingReservationWindow[]>;
+  listWorkspaceInstancesByTemplate?(templateId: string): Promise<WorkspaceInstanceDetails[]>;
 }
 
 export type AvailabilityDateReason =
@@ -110,4 +111,42 @@ export interface TimeAvailabilityResult {
   workspaceIsBookable: boolean;
   workspaceBlockingReason: WorkspaceAvailabilityBlockReason | null;
   slots: AvailableTimeSlot[];
+}
+
+export interface TemplateAvailabilityQuery {
+  templateId: string;
+  date: string;
+  durationMinutes: number;
+  startTime?: string;
+  nowIso?: string;
+}
+
+export interface AvailableInstanceSummary {
+  workspaceInstanceId: string;
+  templateId: string;
+  floorId: string;
+  floorName: string;
+  instanceCode: string;
+  displayName: string;
+  templateName: string;
+  rateAmount: number;
+  capacity: number;
+  photoPath: string | null;
+  photoPosition?: { x: number; y: number };
+  operationalStatus: string;
+  isAvailable: boolean;
+  blockingReason: string | null;
+}
+
+export interface TemplateAvailabilityResult {
+  templateId: string;
+  templateName: string;
+  date: string;
+  durationMinutes: number;
+  startTime: string | null;
+  endTime: string | null;
+  timezone: string;
+  bookingIntervalMinutes: number;
+  availableInstances: AvailableInstanceSummary[];
+  allInstances: AvailableInstanceSummary[];
 }

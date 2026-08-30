@@ -90,6 +90,12 @@ export class InMemoryAvailabilityRepository implements AvailabilityRepository {
     return instance ? cloneInstance(instance) : null;
   }
 
+  async listWorkspaceInstancesByTemplate(templateId: string): Promise<WorkspaceInstanceDetails[]> {
+    return Array.from(this.instances.values())
+      .filter((inst) => inst.templateId === templateId && inst.operationalStatus !== 'INACTIVE')
+      .map(cloneInstance);
+  }
+
   async getBusinessSettings(): Promise<BusinessAvailabilitySettings> {
     return { ...this.settings };
   }
