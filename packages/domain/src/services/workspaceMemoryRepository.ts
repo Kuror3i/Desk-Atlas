@@ -14,7 +14,7 @@ import type {
   WorkspaceRepository,
   WorkspaceTemplate,
 } from '../models/workspace';
-import { WorkspaceConflictError } from './workspaceService';
+import { WorkspaceConflictError, sortWorkspaceInstances } from './workspaceService';
 
 export class InMemoryWorkspaceRepository implements WorkspaceRepository {
   private templates = new Map<string, WorkspaceTemplate>();
@@ -38,7 +38,7 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     return {
       templates: Array.from(this.templates.values()),
       floors: Array.from(this.floors.values()),
-      instances: Array.from(this.instances.values()),
+      instances: sortWorkspaceInstances(Array.from(this.instances.values())),
     };
   }
 

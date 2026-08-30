@@ -1,4 +1,4 @@
-import type { PublishedFloorMap, PublishedMapRepository } from '../models/publishedMap';
+import type { PublishedFloorMap, PublishedMapAudience, PublishedMapRepository } from '../models/publishedMap';
 
 export class PublishedMapNotFoundError extends Error {
   constructor(message: string) {
@@ -13,7 +13,10 @@ export function createPublishedMapService(repository: PublishedMapRepository) {
       return repository.listPublishedFloors();
     },
 
-    async loadPublishedFloorMap(floorId?: string): Promise<PublishedFloorMap> {
+    async loadPublishedFloorMap(
+      floorId?: string,
+      options?: { audience?: PublishedMapAudience }
+    ): Promise<PublishedFloorMap> {
       const floors = await repository.listPublishedFloors();
 
       if (floors.length === 0) {
@@ -27,7 +30,7 @@ export function createPublishedMapService(repository: PublishedMapRepository) {
         throw new PublishedMapNotFoundError(`Published floor map not found: ${selectedFloorId}`);
       }
 
-      const published = await repository.loadPublishedFloorMap(selectedFloorId);
+      const published = await repository.loadPublishedFloorMap(selectedFloorId, options);
       if (!published) {
         throw new PublishedMapNotFoundError(`Published floor map not found: ${selectedFloorId}`);
       }

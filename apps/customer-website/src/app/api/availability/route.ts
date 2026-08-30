@@ -21,6 +21,10 @@ export async function GET(request: NextRequest) {
         date: searchParams.get('date') ?? '',
         durationMinutes,
         nowIso,
+        customStartTime:
+          searchParams.get('customStartTime') ??
+          searchParams.get('startTime') ??
+          undefined,
       });
       return NextResponse.json(result);
     }

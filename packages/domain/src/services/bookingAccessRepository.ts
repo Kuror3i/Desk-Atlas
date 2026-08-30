@@ -15,6 +15,7 @@ export interface BookingAccessRecord {
     | "EXPIRED";
   customerFirstName: string;
   customerLastName: string;
+  customerEmail?: string;
   bookingTokenHash: string;
   qrIssuedAt: string;
   qrRevokedAt: string | null;

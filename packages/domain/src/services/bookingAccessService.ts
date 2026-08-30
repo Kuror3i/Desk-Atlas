@@ -96,6 +96,7 @@ export class BookingAccessService {
       accessState,
       checkInState,
       customerName: `${record.customerFirstName} ${record.customerLastName}`.trim(),
+      customerEmail: record.customerEmail,
       workspaceInstanceId: record.assignedWorkspaceInstanceId,
       workspaceDisplayName: record.assignedWorkspaceDisplayName,
       workspaceInstanceCode: record.assignedWorkspaceInstanceCode,

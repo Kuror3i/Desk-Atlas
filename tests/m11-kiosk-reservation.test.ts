@@ -224,7 +224,7 @@ async function runTests() {
     assert.strictEqual(result.assignedCandidateRank, 0);
   });
 
-  await runTest("allocation fallback", async () => {
+  await runTest("allocation collision moves to manual resolution", async () => {
     await createConfirmedKioskReservation(
       "fallback-blocker",
       "pm-cash",
@@ -240,32 +240,29 @@ async function runTests() {
     );
 
     now = new Date("2026-08-27T09:15:00.000Z");
-    const { result } = await createConfirmedKioskReservation(
-      "fallback-success",
-      "pm-cash",
-      [
+    const reservation = await createKioskReservation({
+      customerSlug: "fallback-target",
+      paymentMethodId: "pm-cash",
+      candidates: [
         {
           rank: 0,
           workspaceInstanceId: instanceA.id,
           startAt: "2026-09-05T09:00:00.000Z",
           endAt: "2026-09-05T11:00:00.000Z",
         },
-        {
-          rank: 1,
-          workspaceInstanceId: instanceB.id,
-          startAt: "2026-09-05T09:00:00.000Z",
-          endAt: "2026-09-05T11:00:00.000Z",
-        },
       ],
-      { userId: "staff-user-3", role: "STAFF" }
-    );
+    });
 
-    assert.strictEqual(result.reservationStatus, "CONFIRMED");
-    assert.strictEqual(result.assignedCandidateRank, 1);
-    assert.strictEqual(result.assignedCandidate?.workspaceInstanceId, instanceB.id);
+    const result = await counterPaymentService.confirmPayment({
+      paymentAttemptId: reservation.counterPaymentAttemptId!,
+      actor: { userId: "staff-user-3", role: "STAFF" },
+    });
+
+    assert.strictEqual(result.reservationStatus, "NEEDS_MANUAL_RESOLUTION");
+    assert.strictEqual(result.assignedCandidate, null);
   });
 
-  await runTest("all candidates lost", async () => {
+  await runTest("candidate lost moves to manual resolution", async () => {
     await createConfirmedKioskReservation(
       "manual-main",
       "pm-cash",
@@ -279,59 +276,25 @@ async function runTests() {
       ],
       { userId: "staff-user-4", role: "STAFF" }
     );
-    await createConfirmedKioskReservation(
-      "manual-alt1",
-      "pm-cash",
-      [
-        {
-          rank: 0,
-          workspaceInstanceId: instanceB.id,
-          startAt: "2026-09-06T09:00:00.000Z",
-          endAt: "2026-09-06T11:00:00.000Z",
-        },
-      ],
-      { userId: "staff-user-5", role: "STAFF" }
-    );
-    await createConfirmedKioskReservation(
-      "manual-alt2",
-      "pm-cash",
-      [
-        {
-          rank: 0,
-          workspaceInstanceId: instanceC.id,
-          startAt: "2026-09-06T09:00:00.000Z",
-          endAt: "2026-09-06T11:00:00.000Z",
-        },
-      ],
-      { userId: "staff-user-6", role: "STAFF" }
-    );
 
     now = new Date("2026-08-27T09:20:00.000Z");
-    const { result } = await createConfirmedKioskReservation(
-      "manual-resolution",
-      "pm-gcash",
-      [
+    const reservation = await createKioskReservation({
+      customerSlug: "manual-resolution",
+      paymentMethodId: "pm-gcash",
+      candidates: [
         {
           rank: 0,
           workspaceInstanceId: instanceA.id,
           startAt: "2026-09-06T09:00:00.000Z",
           endAt: "2026-09-06T11:00:00.000Z",
         },
-        {
-          rank: 1,
-          workspaceInstanceId: instanceB.id,
-          startAt: "2026-09-06T09:00:00.000Z",
-          endAt: "2026-09-06T11:00:00.000Z",
-        },
-        {
-          rank: 2,
-          workspaceInstanceId: instanceC.id,
-          startAt: "2026-09-06T09:00:00.000Z",
-          endAt: "2026-09-06T11:00:00.000Z",
-        },
       ],
-      { userId: "admin-user-2", role: "ADMIN" }
-    );
+    });
+
+    const result = await counterPaymentService.confirmPayment({
+      paymentAttemptId: reservation.counterPaymentAttemptId!,
+      actor: { userId: "admin-user-2", role: "ADMIN" },
+    });
 
     assert.strictEqual(result.reservationStatus, "NEEDS_MANUAL_RESOLUTION");
     assert.strictEqual(result.assignedCandidate, null);
@@ -382,34 +345,31 @@ async function runTests() {
     assert.strictEqual(stored?.source, "KIOSK");
   });
 
-  await runTest("no business-rule divergence from web candidate rules", async () => {
-    const reservation = await createKioskReservation({
-      customerSlug: "same-rules",
-      paymentMethodId: "pm-cash",
-      candidates: [
-        {
-          rank: 0,
-          workspaceInstanceId: instanceA.id,
-          startAt: "2026-09-09T09:00:00.000Z",
-          endAt: "2026-09-09T11:00:00.000Z",
-        },
-        {
-          rank: 1,
-          workspaceInstanceId: instanceB.id,
-          startAt: "2026-09-09T09:00:00.000Z",
-          endAt: "2026-09-09T11:00:00.000Z",
-        },
-        {
-          rank: 2,
-          workspaceInstanceId: instanceC.id,
-          startAt: "2026-09-09T09:00:00.000Z",
-          endAt: "2026-09-09T11:00:00.000Z",
-        },
-      ],
-    });
-
-    assert.strictEqual(reservation.candidates?.length, 3);
-  });
+  await expectError(
+    "kiosk backup candidates rejected",
+    async () => {
+      await createKioskReservation({
+        customerSlug: "no-backups",
+        paymentMethodId: "pm-cash",
+        candidates: [
+          {
+            rank: 0,
+            workspaceInstanceId: instanceA.id,
+            startAt: "2026-09-09T09:00:00.000Z",
+            endAt: "2026-09-09T11:00:00.000Z",
+          },
+          {
+            rank: 1,
+            workspaceInstanceId: instanceB.id,
+            startAt: "2026-09-09T09:00:00.000Z",
+            endAt: "2026-09-09T11:00:00.000Z",
+          },
+        ],
+      });
+    },
+    "Kiosk reservations require exactly one candidate (Main).",
+    ReservationError
+  );
 
   await expectError(
     "invalid kiosk payment method rejected",

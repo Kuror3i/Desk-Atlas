@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import { compareWorkspaceInstances, sortWorkspaceInstances } from '@deskatlas/domain';
 
 const availableTags = [
   'Near Window',
@@ -70,7 +71,7 @@ export function WorkspaceList() {
       if (!res.ok) throw new Error('Failed to fetch workspaces');
       const data = await res.json();
       setTemplates(data.templates || []);
-      setInstances(data.instances || []);
+      setInstances(sortWorkspaceInstances(data.instances || []));
       setFloors(data.floors || []);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error loading workspaces');
@@ -465,6 +466,8 @@ export function WorkspaceList() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
                       {instances
                         .filter(i => (i.template?.name || i.template || 'Default') === tpl)
+                        .slice()
+                        .sort(compareWorkspaceInstances)
                         .map((i, idx) => {
                           const status = i.operationalStatus || i.status || 'ACTIVE';
                           const statusStyle = status === 'ACTIVE'

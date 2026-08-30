@@ -20,11 +20,15 @@ export async function POST(
     const { reservationId } = await context.params;
     const body = await request.json();
     const service = createStaffOperationsService(new ReservationSupabaseRepository());
+    const actorUserId =
+      String(body.actor?.userId ?? body.actorUserId ?? "").trim() || "staff-user-id";
+    const actorRole = body.actor?.role ?? body.actorRole ?? "STAFF";
+
     const result = await service.checkInReservation({
       reservationId,
       actor: {
-        userId: String(body.actorUserId ?? "").trim(),
-        role: body.actorRole,
+        userId: actorUserId,
+        role: actorRole,
       },
     });
 

@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Supabase configuration is missing.");
     }
 
-    const body: CreateReservationRequest = await request.json();
+    const body: any = await request.json();
     const supabase = createClient(supabaseUrl, supabaseKey);
     const reservationRepository = new ReservationSupabaseRepository({
       supabaseUrl,
@@ -71,10 +71,42 @@ export async function POST(request: NextRequest) {
       reservationRepository
     );
 
-    const reservation = await reservationService.createReservation({
-      ...body,
-      source: "KIOSK",
-    });
+    let createRequest: CreateReservationRequest;
+
+    if (body.candidates && Array.isArray(body.candidates)) {
+      createRequest = {
+        source: "KIOSK",
+        customerFirstName: body.customerFirstName ?? body.customer?.firstName,
+        customerLastName: body.customerLastName ?? body.customer?.lastName,
+        customerEmail: body.customerEmail ?? body.customer?.email,
+        paymentMethodId: body.paymentMethodId ?? (body.paymentMethod === "counter_cash" ? "pm-cash" : "pm-gcash"),
+        candidates: body.candidates,
+      };
+    } else {
+      const date = body.date || new Date().toISOString().split("T")[0];
+      const startTime = body.startTime || "09:00:00";
+      const startAt = new Date(`${date}T${startTime}`).toISOString();
+      const durationMin = Number(body.durationMinutes) || 120;
+      const endAt = new Date(new Date(startAt).getTime() + durationMin * 60000).toISOString();
+
+      createRequest = {
+        source: "KIOSK",
+        customerFirstName: body.customerFirstName ?? body.customer?.firstName,
+        customerLastName: body.customerLastName ?? body.customer?.lastName,
+        customerEmail: body.customerEmail ?? body.customer?.email,
+        paymentMethodId: body.paymentMethodId ?? (body.paymentMethod === "counter_cash" ? "pm-cash" : "pm-gcash"),
+        candidates: [
+          {
+            rank: 0,
+            workspaceInstanceId: body.workspaceInstanceId,
+            startAt,
+            endAt,
+          },
+        ],
+      };
+    }
+
+    const reservation = await reservationService.createReservation(createRequest);
 
     return NextResponse.json(reservation, { status: 201 });
   } catch (error) {

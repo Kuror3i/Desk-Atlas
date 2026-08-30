@@ -1,4 +1,8 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { PublicLandingPreviewPhoto } from "@deskatlas/domain";
 
 const steps = [
   "Browse the published workspace map",
@@ -23,12 +27,46 @@ const highlights = [
 ];
 
 export function LandingPage() {
+  const [photos, setPhotos] = useState<PublicLandingPreviewPhoto[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadPreviewPhotos() {
+      try {
+        const res = await fetch("/api/landing-preview");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.photos)) {
+            setPhotos(data.photos);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load landing preview photos:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPreviewPhotos();
+  }, []);
+
+  // Automatic slide rotation with smooth fade transition
+  useEffect(() => {
+    if (photos.length <= 1) return;
+    const interval = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % photos.length);
+    }, 4500);
+    return () => clearInterval(interval);
+  }, [photos.length]);
+
   return (
     <main className="min-h-screen bg-[var(--da-canvas)] text-[var(--da-text-primary)]">
       <header className="border-b border-[var(--da-border)] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <Link href="/" className="flex items-center gap-3">
-            <span className="h-3 w-3 rounded-full bg-[var(--da-brand-accent)]" />
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--da-brand-accent)] flex-shrink-0">
+              <div className="h-3 w-3 rounded-[3px] bg-[var(--da-brand-dark)]" />
+            </div>
             <span className="text-xl font-extrabold tracking-[-0.02em] text-[var(--da-brand-dark)]">
               DeskAtlas
             </span>
@@ -62,24 +100,46 @@ export function LandingPage() {
           </div>
         </div>
 
-        <div className="rounded-[28px] border border-[var(--da-border)] bg-white p-6 shadow-[var(--da-shadow-lg)]">
-          <div className="grid grid-cols-4 gap-3">
-            {Array.from({ length: 12 }).map((_, index) => (
-              <div
-                key={index}
-                className={`aspect-square rounded-2xl ${
-                  index === 2 || index === 9
-                    ? "bg-[var(--da-soft)]"
-                    : index === 5
-                      ? "bg-[var(--da-attention)]"
-                      : "bg-[var(--da-info)]"
-                }`}
-              />
-            ))}
-          </div>
-          <p className="mt-4 text-center text-sm text-[var(--da-text-secondary)]">
-            Published workspace map preview
-          </p>
+        <div className="rounded-[28px] border border-[var(--da-border)] bg-white p-4 shadow-[var(--da-shadow-lg)] overflow-hidden">
+          {photos.length > 0 ? (
+            <div className="relative aspect-[16/10] w-full overflow-hidden rounded-[20px] bg-slate-100 border border-[var(--da-border-light)]">
+              {photos.map((photo, index) => {
+                const isActive = index === currentIndex;
+                return (
+                  <div
+                    key={photo.id || index}
+                    className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                      isActive ? "opacity-100 z-10" : "opacity-0 pointer-events-none z-0"
+                    }`}
+                  >
+                    <img
+                      src={photo.url}
+                      alt={`Workspace preview ${index + 1}`}
+                      className="h-full w-full object-cover"
+                      style={{
+                        objectPosition: `${photo.position?.x ?? 50}% ${photo.position?.y ?? 50}%`,
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-3 p-2">
+              {Array.from({ length: 12 }).map((_, index) => (
+                <div
+                  key={index}
+                  className={`aspect-square rounded-2xl ${
+                    index === 2 || index === 9
+                      ? "bg-[var(--da-soft)]"
+                      : index === 5
+                        ? "bg-[var(--da-attention)]"
+                        : "bg-[var(--da-info)]"
+                  }`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

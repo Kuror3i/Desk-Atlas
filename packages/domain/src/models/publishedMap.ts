@@ -18,12 +18,14 @@ export interface PublishedWorkspaceSummary {
   templateName: string;
   description: string | null;
   photoPath: string | null;
+  photoPosition?: { x: number; y: number };
   capacity: number;
   rateAmount: number;
   pricingUnit: PricingUnit;
   operationalStatus: WorkspaceOperationalStatus;
   isBookable: boolean;
   blockingReason: WorkspaceAvailabilityBlockReason | null;
+  tags?: string[];
 }
 
 export interface PublishedMapElement {
@@ -41,6 +43,8 @@ export interface PublishedMapElement {
   workspace: PublishedWorkspaceSummary | null;
 }
 
+export type PublishedMapAudience = 'CUSTOMER' | 'KIOSK' | 'STAFF' | 'ADMIN';
+
 export interface PublishedFloorMap {
   floor: Floor;
   version: PublishedMapVersion;
@@ -49,5 +53,5 @@ export interface PublishedFloorMap {
 
 export interface PublishedMapRepository {
   listPublishedFloors(): Promise<Floor[]>;
-  loadPublishedFloorMap(floorId: string): Promise<PublishedFloorMap | null>;
+  loadPublishedFloorMap(floorId: string, options?: { audience?: PublishedMapAudience }): Promise<PublishedFloorMap | null>;
 }

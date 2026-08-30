@@ -1,5 +1,7 @@
+"use client";
+
 import { useState } from 'react';
-import { Star, X, Calendar, Clock, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Star, X, Calendar, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export type DeskStatus = 'available' | 'pending' | 'reserved' | 'occupied';
 
@@ -27,12 +29,20 @@ export interface Desk {
   dayRate: number;
 }
 
+export interface KioskMarker {
+  x: number;
+  y: number;
+  label?: string;
+  color?: string;
+}
+
 interface WorkspaceMapProps {
   desks: Desk[];
   onDeskClick: (desk: Desk) => void;
   selectedDeskId?: string;
   highlightedDeskIds?: string[];
-  interactiveZone?: string; // Only desks in this zone will be clickable
+  interactiveZone?: string;
+  kioskMarker?: KioskMarker | null;
 }
 
 const statusColors: Record<DeskStatus, string> = {
@@ -42,37 +52,25 @@ const statusColors: Record<DeskStatus, string> = {
   occupied: 'fill-gray-400'
 };
 
-// Recommendation mapping based on desk position
 const recommendationMap: Record<string, RecommendationType[]> = {
-  // Near window (right side of map, x > 750)
   'B4': ['window'],
   'B8': ['window'],
   'B12': ['window', 'private'],
   'PB2': ['window', 'meeting-rooms'],
   'MR3': ['window', 'meeting-rooms'],
-
-  // Near CR (assumed bottom-left area)
   'A9': ['cr'],
   'A10': ['cr'],
   'A11': ['cr'],
   'PB1': ['cr', 'meeting-rooms'],
-
-  // Near reception (top-left area, y < 100)
   'A1': ['reception', 'private'],
   'A2': ['reception'],
   'A3': ['reception'],
   'A4': ['reception'],
-
-  // Quiet area (corner/edge positions, away from main traffic)
   'A12': ['quiet', 'private'],
   'B9': ['quiet'],
   'B10': ['quiet'],
   'B11': ['quiet'],
-
-  // Private/Corner areas
   'B1': ['private'],
-
-  // Near meeting rooms (y > 400)
   'MR1': ['meeting-rooms'],
   'MR2': ['meeting-rooms']
 };
@@ -86,52 +84,7 @@ const recommendationLabels: Record<Exclude<RecommendationType, null>, string> = 
   'meeting-rooms': 'Near meeting rooms'
 };
 
-// Mock schedule data
-interface ScheduleItem {
-  date: string;
-  timeSlot: string;
-  duration: number;
-  userName: string;
-  status: 'active' | 'upcoming' | 'pending';
-  paymentStatus?: 'paid' | 'pending-cash';
-}
-
-const mockSchedule: ScheduleItem[] = [
-  {
-    date: '2026-05-15',
-    timeSlot: '09:00',
-    duration: 4,
-    userName: 'John Doe',
-    status: 'active',
-    paymentStatus: 'paid'
-  },
-  {
-    date: '2026-05-16',
-    timeSlot: '14:00',
-    duration: 2,
-    userName: 'Jane Smith',
-    status: 'pending',
-    paymentStatus: 'pending-cash'
-  },
-  {
-    date: '2026-05-17',
-    timeSlot: '10:00',
-    duration: 8,
-    userName: 'Bob Johnson',
-    status: 'upcoming',
-    paymentStatus: 'paid'
-  },
-  {
-    date: '2026-05-18',
-    timeSlot: '09:00',
-    duration: 4,
-    userName: 'Alice Cooper',
-    status: 'upcoming',
-    paymentStatus: 'paid'
-  }
-];
-
-export function WorkspaceMap({ desks, onDeskClick, selectedDeskId, highlightedDeskIds = [], interactiveZone }: WorkspaceMapProps) {
+export function WorkspaceMap({ desks, onDeskClick, selectedDeskId, highlightedDeskIds = [], interactiveZone, kioskMarker }: WorkspaceMapProps) {
   const [hoveredDesk, setHoveredDesk] = useState<string | null>(null);
   const [showRecommendations, setShowRecommendations] = useState(false);
   const [recommendationType, setRecommendationType] = useState<RecommendationType>(null);
@@ -188,7 +141,6 @@ export function WorkspaceMap({ desks, onDeskClick, selectedDeskId, highlightedDe
   // Handle desk click with recommendation popup
   const handleDeskClick = (desk: Desk, event: React.MouseEvent<SVGGElement>) => {
     if (showRecommendations && isRecommended(desk)) {
-      const rect = event.currentTarget.getBoundingClientRect();
       setRecommendationPopup({
         desk,
         x: desk.x,
@@ -390,6 +342,21 @@ export function WorkspaceMap({ desks, onDeskClick, selectedDeskId, highlightedDe
               </g>
             );
           })}
+
+          {/* Kiosk "You Are Here" Marker */}
+          {kioskMarker && (
+            <g transform={`translate(${kioskMarker.x}, ${kioskMarker.y})`} className="pointer-events-none">
+              <circle cx="0" cy="0" r="22" fill={kioskMarker.color || '#DC2626'} opacity="0.25" />
+              <circle cx="0" cy="0" r="14" fill={kioskMarker.color || '#DC2626'} stroke="#FFFFFF" strokeWidth="2.5" />
+              <circle cx="0" cy="0" r="4" fill="#FFFFFF" />
+              <g transform="translate(0, 18)">
+                <rect x="-50" y="0" width="100" height="22" rx="11" fill={kioskMarker.color || '#DC2626'} stroke="#FFFFFF" strokeWidth="1" />
+                <text x="0" y="15" fill="#FFFFFF" fontSize="10" fontWeight="bold" textAnchor="middle">
+                  {kioskMarker.label || 'You Are Here'}
+                </text>
+              </g>
+            </g>
+          )}
         </svg>
 
         {/* Recommendation Full-Screen Modal */}
@@ -593,7 +560,6 @@ export function WorkspaceMap({ desks, onDeskClick, selectedDeskId, highlightedDe
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

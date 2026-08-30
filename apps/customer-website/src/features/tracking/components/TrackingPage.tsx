@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useReservationTracking } from "../hooks/useReservationTracking";
 
 export function TrackingPage() {
   const [referenceCode, setReferenceCode] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const { data, loading, error, trackReservation } = useReservationTracking();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const codeFromUrl =
+        params.get("code") || params.get("reference") || params.get("referenceCode");
+      if (codeFromUrl) {
+        setReferenceCode(codeFromUrl.trim().toUpperCase());
+      }
+    }
+  }, []);
 
   return (
     <main className="min-h-screen bg-[var(--da-canvas)] px-6 py-12">

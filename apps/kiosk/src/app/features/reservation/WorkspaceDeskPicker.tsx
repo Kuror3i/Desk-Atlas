@@ -5,9 +5,11 @@ interface WorkspaceDeskPickerProps {
   workspaces: any[];
   onSelect: (workspace: any) => void;
   onBack: () => void;
+  kioskMarker?: any;
+  floor?: any;
 }
 
-export function WorkspaceDeskPicker({ template, workspaces, onSelect, onBack }: WorkspaceDeskPickerProps) {
+export function WorkspaceDeskPicker({ template, workspaces, onSelect, onBack, kioskMarker, floor }: WorkspaceDeskPickerProps) {
   return (
     <main data-screen-label="Kiosk Desk Picker">
       <div style={{ marginBottom: "20px" }}>
@@ -15,9 +17,15 @@ export function WorkspaceDeskPicker({ template, workspaces, onSelect, onBack }: 
           ← Back
         </button>
       </div>
-      <h1 style={{ fontSize: "44px", fontWeight: 800, color: "#0C3B27", margin: "0 0 40px" }}>
+      <h1 style={{ fontSize: "44px", fontWeight: 800, color: "#0C3B27", margin: "0 0 20px" }}>
         Pick your {template.name}
       </h1>
+      {kioskMarker && (
+        <div style={{ display: "inline-flex", alignItems: "center", gap: "10px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: "12px", padding: "10px 18px", marginBottom: "28px", color: "#991B1B", fontWeight: 700, fontSize: "16px" }}>
+          <span style={{ fontSize: "20px" }}>📍</span>
+          <span>You are here: <strong>{kioskMarker.label || 'Kiosk Location'}</strong>{floor?.name ? ` on ${floor.name}` : ''}</span>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "24px" }}>
         {workspaces.map(ws => {
           const available = ws.operational_status === "ACTIVE"; // Actual availability is checked in next step, but here we just check if it's ACTIVE

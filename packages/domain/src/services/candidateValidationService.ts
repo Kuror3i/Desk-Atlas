@@ -13,6 +13,19 @@ export interface CandidateValidationContext {
   templates: WorkspaceTemplate[];
 }
 
+function getDateStringInTimezone(date: Date, timezone = "Asia/Manila"): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    return date.toISOString().split("T")[0];
+  }
+}
+
 export function validateCandidates(
   candidates: CandidateSubmissionDTO[],
   context: CandidateValidationContext
@@ -26,7 +39,7 @@ export function validateCandidates(
   }
 
   const ranks = new Set<number>();
-  const instanceIds = new Set<string>();
+  const instanceTimeCombos = new Set<string>();
 
   let mainCandidate: CandidateSubmissionDTO | null = null;
 
@@ -40,10 +53,13 @@ export function validateCandidates(
     }
     ranks.add(candidate.rank);
 
-    if (instanceIds.has(candidate.workspaceInstanceId)) {
-      throw new CandidateValidationError(`Duplicate workspace instance detected: ${candidate.workspaceInstanceId}. Candidates must use different physical instances.`);
+    const comboKey = `${candidate.workspaceInstanceId}__${candidate.startAt}`;
+    if (instanceTimeCombos.has(comboKey)) {
+      throw new CandidateValidationError(
+        `Duplicate candidate selection detected on instance ${candidate.workspaceInstanceId} for start time ${candidate.startAt}. Same-instance backups must select different time slots.`
+      );
     }
-    instanceIds.add(candidate.workspaceInstanceId);
+    instanceTimeCombos.add(comboKey);
 
     if (candidate.rank === 0) {
       mainCandidate = candidate;
@@ -76,7 +92,8 @@ export function validateCandidates(
     throw new CandidateValidationError("Invalid duration for Main candidate.");
   }
 
-  const mainDateString = mainStart.toISOString().split('T')[0];
+  const mainIsoDate = mainStart.toISOString().split("T")[0];
+  const mainZonedDate = getDateStringInTimezone(mainStart);
 
   for (const candidate of candidates) {
     if (candidate.rank === 0) continue;
@@ -100,8 +117,10 @@ export function validateCandidates(
       throw new CandidateValidationError(`Candidates must have the same duration.`);
     }
 
-    const dateString = start.toISOString().split('T')[0];
-    if (dateString !== mainDateString) {
+    const candIsoDate = start.toISOString().split("T")[0];
+    const candZonedDate = getDateStringInTimezone(start);
+
+    if (candIsoDate !== mainIsoDate && candZonedDate !== mainZonedDate) {
       throw new CandidateValidationError(`Candidates must have the same booking date.`);
     }
   }

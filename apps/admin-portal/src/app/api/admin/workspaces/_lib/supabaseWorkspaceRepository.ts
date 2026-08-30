@@ -14,7 +14,7 @@ import type {
   WorkspaceRepository,
   WorkspaceTemplate,
 } from '@deskatlas/domain';
-import { WorkspaceConflictError } from '@deskatlas/domain';
+import { WorkspaceConflictError, sortWorkspaceInstances } from '@deskatlas/domain';
 
 type TemplateRow = {
   id: string;
@@ -97,7 +97,7 @@ export class SupabaseWorkspaceRepository implements WorkspaceRepository {
     return {
       templates: templates.map(mapTemplate),
       floors: floors.map(mapFloor),
-      instances: instances.map(mapInstanceDetails),
+      instances: sortWorkspaceInstances(instances.map(mapInstanceDetails)),
     };
   }
 

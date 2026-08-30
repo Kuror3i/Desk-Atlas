@@ -33,6 +33,18 @@ export class StaffOperationsService {
     );
   }
 
+  async getOperationalReservation(
+    idOrReferenceCode: string
+  ): Promise<StaffOperationalReservation | null> {
+    if (!idOrReferenceCode || idOrReferenceCode.trim() === "") {
+      throw new StaffOperationsError("Reservation ID is required.");
+    }
+
+    return this.staffOperationsRepository.getOperationalReservation(
+      idOrReferenceCode.trim()
+    );
+  }
+
   async listOccupancy(): Promise<OccupancyRecord[]> {
     return this.staffOperationsRepository.listOccupancy(this.nowProvider().toISOString());
   }

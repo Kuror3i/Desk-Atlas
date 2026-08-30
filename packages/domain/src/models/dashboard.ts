@@ -65,3 +65,26 @@ export interface AdminDashboardSnapshot {
   };
   generatedAt: string;
 }
+
+export interface StaffDashboardSnapshot {
+  range: "today";
+  rangeLabel: string;
+  metrics: {
+    reservations: AdminDashboardMetric;
+    checkedIn: AdminDashboardCheckedInMetric;
+  };
+  activity: AdminDashboardActivityItem[];
+  workspaceOverview: {
+    floorLabel: string;
+    totalWorkspaces: number;
+    occupancyBar: {
+      availablePct: number;
+      inUsePct: number;
+      reservedPct: number;
+      maintenancePct: number;
+    };
+    breakdown: AdminDashboardOccupancyItem[];
+  };
+  generatedAt: string;
+}
+

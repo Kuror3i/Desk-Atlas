@@ -544,7 +544,7 @@ CREATE TABLE public.reservation_candidates (
   CONSTRAINT reservation_candidates_rank_valid CHECK (rank BETWEEN 0 AND 2),
   CONSTRAINT reservation_candidates_interval_valid CHECK (start_at < end_at),
   CONSTRAINT reservation_candidates_rank_unique UNIQUE (reservation_id, rank),
-  CONSTRAINT reservation_candidates_instance_unique UNIQUE (reservation_id, workspace_instance_id)
+  CONSTRAINT reservation_candidates_instance_time_unique UNIQUE (reservation_id, workspace_instance_id, start_at)
 );
 
 -- Strong physical double-book protection.

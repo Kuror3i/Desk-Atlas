@@ -54,6 +54,10 @@ export class PaymentSessionService {
       throw new PaymentSessionError("Invalid payment token.");
     }
 
+    const businessName = this.paymentRepository.getBusinessName
+      ? await this.paymentRepository.getBusinessName()
+      : session.businessName ?? "DeskAtlas";
+
     const nowIso = this.nowProvider().toISOString();
     if (
       session.paymentStatus === "PENDING" &&
@@ -67,12 +71,14 @@ export class PaymentSessionService {
       }
       return {
         ...expiredSession,
+        businessName: businessName ?? expiredSession.businessName ?? "DeskAtlas",
         paymentMethods: await this.paymentRepository.listActiveWebPaymentMethods(),
       };
     }
 
     return {
       ...session,
+      businessName: businessName ?? session.businessName ?? "DeskAtlas",
       paymentMethods: await this.paymentRepository.listActiveWebPaymentMethods(),
     };
   }

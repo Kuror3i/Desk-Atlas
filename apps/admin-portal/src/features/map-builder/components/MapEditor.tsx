@@ -2,6 +2,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/features/auth/components/AuthProvider';
+import {
+  computeFitViewZoom,
+  clampMapZoom,
+  getSavedMapZoom,
+  saveMapZoom,
+  DEFAULT_MAP_CANVAS_WIDTH,
+  DEFAULT_MAP_CANVAS_HEIGHT,
+  DEFAULT_MAP_GRID_SIZE,
+} from '@deskatlas/domain';
 
 function getContrastColor(hexColor?: string): string {
   if (!hexColor || !hexColor.startsWith('#') || hexColor.length < 7) return '#111827';
@@ -89,6 +98,12 @@ export function MapEditor() {
   const [builderObjects, setBuilderObjects] = useState<any[]>([]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasDimensions, setCanvasDimensions] = useState({
+    width: DEFAULT_MAP_CANVAS_WIDTH,
+    height: DEFAULT_MAP_CANVAS_HEIGHT,
+    gridSize: DEFAULT_MAP_GRID_SIZE,
+  });
   const [dragState, setDragState] = useState<{ id: string; startX: number; startY: number; startObjX: number; startObjY: number } | null>(null);
   const [resizeState, setResizeState] = useState<{ id: string; startX: number; startY: number; startObjW: number; startObjH: number; startObjX: number; startObjY: number } | null>(null);
 
@@ -158,6 +173,27 @@ export function MapEditor() {
         }
       }
 
+      const canvasW = Number(mapData?.version?.canvasWidth) || DEFAULT_MAP_CANVAS_WIDTH;
+      const canvasH = Number(mapData?.version?.canvasHeight) || DEFAULT_MAP_CANVAS_HEIGHT;
+      const grid = Number(mapData?.version?.gridSize) || DEFAULT_MAP_GRID_SIZE;
+      setCanvasDimensions({ width: canvasW, height: canvasH, gridSize: grid });
+
+      const savedZoom = getSavedMapZoom(floorId);
+      if (savedZoom !== null) {
+        setBuilderZoom(savedZoom);
+      } else if (containerRef.current) {
+        const fitZoom = computeFitViewZoom(
+          containerRef.current.clientWidth,
+          containerRef.current.clientHeight,
+          canvasW,
+          canvasH,
+          0
+        );
+        setBuilderZoom(fitZoom);
+      } else {
+        setBuilderZoom(1);
+      }
+
       if (!mapData || !mapData.elements || mapData.elements.length === 0) {
         setBuilderObjects([]);
         setSelectedObjId(null);
@@ -179,24 +215,32 @@ export function MapEditor() {
         const isPantry = el.elementType?.toLowerCase().includes('pantry') || el.label?.toLowerCase().includes('pantry');
         const isEmergencyExit = el.elementType?.toLowerCase().includes('exit') || el.elementType?.toLowerCase().includes('emergency') || el.label?.toLowerCase().includes('exit') || el.label?.toLowerCase().includes('emergency');
         const isAmenity = el.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+        const isKioskMarker =
+          el.elementType === 'KIOSK_YOU_ARE_HERE' ||
+          el.elementType === 'kiosk_marker' ||
+          el.elementRole === 'INFORMATION' ||
+          el.properties?.markerType === 'KIOSK_YOU_ARE_HERE' ||
+          el.label?.toLowerCase() === 'you are here';
 
         let defaultAmenityColor = '#F3F7F4';
         if (isRestroom) defaultAmenityColor = '#E0F2FE';
         else if (isPantry) defaultAmenityColor = '#FEF3C7';
         else if (isEmergencyExit) defaultAmenityColor = '#DCFCE7';
 
-        const color = el.properties?.color || tmpl?.defaultColor || (el.elementRole === 'WORKSPACE' ? '#009689' : (isAmenity ? defaultAmenityColor : '#F3F7F4'));
-        const displayName = el.label || inst?.displayName || tmpl?.name || el.elementType;
+        const color = el.properties?.color || tmpl?.defaultColor || (el.elementRole === 'WORKSPACE' ? '#009689' : (isKioskMarker ? '#DC2626' : (isAmenity ? defaultAmenityColor : '#F3F7F4')));
+        const displayName = el.label || (isKioskMarker ? 'You Are Here' : (inst?.displayName || tmpl?.name || el.elementType));
 
         const isThinWall = el.elementType?.toLowerCase().includes('thin') || el.elementType?.toLowerCase().includes('separator') || el.label?.toLowerCase().includes('thin') || el.label?.toLowerCase().includes('separator');
         const isGlass = el.elementType?.toLowerCase().includes('glass') || el.label?.toLowerCase().includes('glass');
         const isWall = el.elementType?.toLowerCase().includes('wall') || el.label?.toLowerCase().includes('wall') || isThinWall || isGlass;
         const isRect = el.elementType?.toLowerCase() === 'rectangle' || el.elementType?.toLowerCase() === 'rect' || tmpl?.defaultShape?.toLowerCase() === 'rectangle' || tmpl?.defaultShape?.toLowerCase() === 'rect';
-        const defaultW = isRect ? 120 : (isWall ? 160 : (isAmenity ? 100 : 80));
-        const defaultH = isThinWall ? 10 : (isWall ? 20 : (isAmenity ? 80 : 80));
+        const defaultW = isKioskMarker ? 80 : (isRect ? 120 : (isWall ? 160 : (isAmenity ? 100 : 80)));
+        const defaultH = isKioskMarker ? 80 : (isThinWall ? 10 : (isWall ? 20 : (isAmenity ? 80 : 80)));
 
         let normType = el.elementType;
-        if (!normType || normType === 'generic') {
+        if (isKioskMarker) {
+          normType = 'KIOSK_YOU_ARE_HERE';
+        } else if (!normType || normType === 'generic') {
           if (isRestroom) normType = 'restroom';
           else if (isPantry) normType = 'pantry';
           else if (isEmergencyExit) normType = 'emergency_exit';
@@ -212,13 +256,13 @@ export function MapEditor() {
           x: Number(el.x) || 0,
           y: Number(el.y) || 0,
           w: el.width !== undefined && el.width !== null ? Number(el.width) : defaultW,
-          h: isThinWall ? 10 : (isWall ? 20 : (el.height !== undefined && el.height !== null ? Number(el.height) : defaultH)),
+          h: isKioskMarker ? 80 : (isThinWall ? 10 : (isWall ? 20 : (el.height !== undefined && el.height !== null ? Number(el.height) : defaultH))),
           rotation: el.rotation || 0,
           bookable: el.elementRole === 'WORKSPACE',
           template: tmpl?.name || el.properties?.template || null,
           status: inst?.operationalStatus || (el.elementRole === 'WORKSPACE' ? 'ACTIVE' : null),
           workspaceInstanceId: el.workspaceInstanceId || null,
-          elementRole: el.elementRole === 'WORKSPACE' ? 'WORKSPACE' : (isAmenity ? 'AMENITY' : (el.elementRole || 'STRUCTURE')),
+          elementRole: el.elementRole === 'WORKSPACE' ? 'WORKSPACE' : (isKioskMarker ? 'INFORMATION' : (isAmenity ? 'AMENITY' : (el.elementRole || 'STRUCTURE'))),
           elementType: normType,
           color,
         };
@@ -240,6 +284,33 @@ export function MapEditor() {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || !selectedFloorId) return;
+    const checkAndFit = () => {
+      if (!containerRef.current) return;
+      const savedZoom = getSavedMapZoom(selectedFloorId);
+      if (savedZoom !== null) {
+        setBuilderZoom(savedZoom);
+      } else if (containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+        const fitZoom = computeFitViewZoom(
+          containerRef.current.clientWidth,
+          containerRef.current.clientHeight,
+          canvasDimensions.width,
+          canvasDimensions.height,
+          0
+        );
+        setBuilderZoom(fitZoom);
+      }
+    };
+
+    const timeout = setTimeout(checkAndFit, 60);
+    window.addEventListener('resize', checkAndFit);
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener('resize', checkAndFit);
+    };
+  }, [selectedFloorId, canvasDimensions.width, canvasDimensions.height, loading]);
 
   const handleFloorChange = async (floorId: string) => {
     setSelectedFloorId(floorId);
@@ -414,6 +485,83 @@ export function MapEditor() {
     setSaveState('Unsaved changes');
   };
 
+  // Add Kiosk "You Are Here" Marker (enforce at most 1 per floor)
+  const handleAddKioskMarker = () => {
+    if (!selectedFloorId) {
+      setShowFloorModal(true);
+      return;
+    }
+
+    const existingIndex = builderObjects.findIndex(
+      (o) => o.elementType === 'KIOSK_YOU_ARE_HERE' || o.elementRole === 'INFORMATION'
+    );
+
+    if (existingIndex >= 0) {
+      const existing = builderObjects[existingIndex];
+      setSelectedObjId(existing.id);
+      setShowInspector(true);
+      setSuccessMsg('Kiosk marker already exists on this floor. Selected existing marker.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+      return;
+    }
+
+    const newObj = {
+      id: 'kiosk-marker-' + Date.now(),
+      name: 'You Are Here',
+      x: 100,
+      y: 100,
+      w: 80,
+      h: 80,
+      rotation: 0,
+      bookable: false,
+      template: null,
+      status: null,
+      workspaceInstanceId: null,
+      elementRole: 'INFORMATION',
+      elementType: 'KIOSK_YOU_ARE_HERE',
+      color: '#DC2626',
+    };
+
+    setBuilderObjects(prev => [...prev, newObj]);
+    setSelectedObjId(newObj.id);
+    setShowInspector(true);
+    setSaveState('Unsaved changes');
+  };
+
+  const handleFitView = () => {
+    if (!containerRef.current) {
+      setBuilderZoom(1);
+      return;
+    }
+    const fitZoom = computeFitViewZoom(
+      containerRef.current.clientWidth,
+      containerRef.current.clientHeight,
+      canvasDimensions.width,
+      canvasDimensions.height,
+      0
+    );
+    setBuilderZoom(fitZoom);
+    if (selectedFloorId) {
+      saveMapZoom(selectedFloorId, fitZoom);
+    }
+  };
+
+  const handleZoomIn = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z + 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
+  };
+
+  const handleZoomOut = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z - 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
+  };
+
   // Drag and Resize handlers
   useEffect(() => {
     if (dragState) {
@@ -433,8 +581,8 @@ export function MapEditor() {
         const objW = obj?.w || 0;
         const objH = obj?.h || 0;
 
-        const canvasW = canvasRef.current ? canvasRef.current.offsetWidth : 1600;
-        const canvasH = canvasRef.current ? canvasRef.current.offsetHeight : 1000;
+        const canvasW = canvasDimensions.width;
+        const canvasH = canvasDimensions.height;
 
         newX = Math.max(0, Math.min(newX, canvasW - objW));
         newY = Math.max(0, Math.min(newY, canvasH - objH));
@@ -527,8 +675,8 @@ export function MapEditor() {
           const objX = obj?.x || 0;
           const objY = obj?.y || 0;
 
-          const canvasW = canvasRef.current ? canvasRef.current.offsetWidth : 1600;
-          const canvasH = canvasRef.current ? canvasRef.current.offsetHeight : 1000;
+          const canvasW = canvasDimensions.width;
+          const canvasH = canvasDimensions.height;
 
           newW = Math.min(newW, canvasW - objX);
           newH = Math.min(newH, canvasH - objY);
@@ -547,7 +695,7 @@ export function MapEditor() {
         window.removeEventListener('pointerup', handlePointerUp);
       };
     }
-  }, [dragState, resizeState, builderZoom, snapOn, builderObjects]);
+  }, [dragState, resizeState, builderZoom, snapOn, builderObjects, canvasDimensions]);
 
   // Save draft
   const handleSaveDraft = async () => {
@@ -565,11 +713,19 @@ export function MapEditor() {
         const isPantry = obj.elementType?.toLowerCase().includes('pantry') || obj.name?.toLowerCase().includes('pantry');
         const isEmergencyExit = obj.elementType?.toLowerCase().includes('exit') || obj.elementType?.toLowerCase().includes('emergency') || obj.name?.toLowerCase().includes('exit') || obj.name?.toLowerCase().includes('emergency');
         const isAmenity = obj.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+        const isKioskMarker =
+          obj.elementType === 'KIOSK_YOU_ARE_HERE' ||
+          obj.elementRole === 'INFORMATION' ||
+          obj.name?.toLowerCase() === 'you are here';
         const fixedThickness = isThinWall ? 10 : 20;
 
-        let role: 'WORKSPACE' | 'STRUCTURE' | 'AMENITY' = obj.bookable ? 'WORKSPACE' : (isAmenity ? 'AMENITY' : (obj.elementRole || 'STRUCTURE'));
+        let role: 'WORKSPACE' | 'STRUCTURE' | 'AMENITY' | 'INFORMATION' = obj.bookable
+          ? 'WORKSPACE'
+          : (isKioskMarker ? 'INFORMATION' : (isAmenity ? 'AMENITY' : (obj.elementRole || 'STRUCTURE')));
         let normType = obj.elementType;
-        if (!normType || normType === 'generic') {
+        if (isKioskMarker) {
+          normType = 'KIOSK_YOU_ARE_HERE';
+        } else if (!normType || normType === 'generic') {
           if (obj.bookable) normType = 'desk';
           else if (isRestroom) normType = 'restroom';
           else if (isPantry) normType = 'pantry';
@@ -587,11 +743,14 @@ export function MapEditor() {
           x: Math.round(obj.x),
           y: Math.round(obj.y),
           width: Math.max(20, Math.round(obj.w)),
-          height: isWall ? fixedThickness : Math.max(20, Math.round(obj.h)),
+          height: isKioskMarker ? 80 : (isWall ? fixedThickness : Math.max(20, Math.round(obj.h))),
           rotation: (obj.rotation || 0) as 0 | 90 | 180 | 270,
           zIndex: index + 1,
-          label: obj.name || null,
-          properties: { color: obj.color },
+          label: obj.name || (isKioskMarker ? 'You Are Here' : null),
+          properties: {
+            color: obj.color,
+            ...(isKioskMarker ? { markerType: 'KIOSK_YOU_ARE_HERE' } : {}),
+          },
           isLocked: false,
         };
       });
@@ -601,9 +760,9 @@ export function MapEditor() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           floorId: selectedFloorId,
-          canvasWidth: 1600,
-          canvasHeight: 1000,
-          gridSize: 20,
+          canvasWidth: canvasDimensions.width,
+          canvasHeight: canvasDimensions.height,
+          gridSize: canvasDimensions.gridSize,
           elements: elementsPayload,
           actorUserId: user?.id ?? null,
         }),
@@ -678,8 +837,8 @@ export function MapEditor() {
     const target = builderObjects.find(o => o.id === id);
     if (!target || target.bookable || target.elementRole === 'WORKSPACE') return;
 
-    const canvasW = canvasRef.current ? canvasRef.current.offsetWidth : 1600;
-    const canvasH = canvasRef.current ? canvasRef.current.offsetHeight : 1000;
+    const canvasW = canvasDimensions.width;
+    const canvasH = canvasDimensions.height;
 
     const newX = Math.min(target.x + 20, canvasW - target.w);
     const newY = Math.min(target.y + 20, canvasH - target.h);
@@ -778,10 +937,10 @@ export function MapEditor() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setBuilderZoom(z => Math.max(0.5, z - 0.1))} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>−</button>
+          <button onClick={handleZoomOut} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>−</button>
           <span style={{ fontSize: '12px', fontFamily: 'var(--da-font-family)', width: '40px', textAlign: 'center' }}>{Math.round(builderZoom * 100)}%</span>
-          <button onClick={() => setBuilderZoom(z => Math.min(2, z + 0.1))} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>+</button>
-          <button onClick={() => setBuilderZoom(1)} style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '6px', padding: '6px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Fit View</button>
+          <button onClick={handleZoomIn} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>+</button>
+          <button onClick={handleFitView} style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '6px', padding: '6px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Fit View</button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -803,7 +962,7 @@ export function MapEditor() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0, width: '100%' }}>
         {/* Palette */}
         <aside style={{ width: '200px', background: '#fff', borderRight: '1px solid var(--da-border)', padding: '14px', overflowY: 'auto', flexShrink: 0 }}>
           <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.05em', marginBottom: '8px', fontFamily: 'var(--da-font-family)' }}>WORKSPACES</div>
@@ -837,10 +996,37 @@ export function MapEditor() {
               </button>
             </div>
           ))}
+
+          <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.05em', margin: '16px 0 8px', fontFamily: 'var(--da-font-family)' }}>KIOSK ORIENTATION</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderTop: '1px solid var(--da-border-light)' }}>
+            <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>📍</span> You Are Here
+            </span>
+            <button
+              onClick={handleAddKioskMarker}
+              style={{ border: '1px solid var(--da-border)', background: 'var(--da-canvas)', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              {builderObjects.some(o => o.elementType === 'KIOSK_YOU_ARE_HERE' || o.elementRole === 'INFORMATION') ? 'Select' : '+ Add'}
+            </button>
+          </div>
         </aside>
 
         {/* Canvas Area */}
-        <div style={{ flex: 1, overflow: 'hidden', background: '#F1F8F3', position: 'relative' }}>
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflow: 'auto',
+            background: '#fff',
+            position: 'relative',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'flex-start',
+          }}
+        >
           {floors.length === 0 ? (
             /* Empty state when no floor is in the database */
             <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
@@ -864,25 +1050,41 @@ export function MapEditor() {
             </div>
           ) : (
             <div
-              ref={canvasRef}
               style={{
-                width: `${100 / builderZoom}%`,
-                height: `${100 / builderZoom}%`,
+                width: `${canvasDimensions.width * builderZoom}px`,
+                height: `${canvasDimensions.height * builderZoom}px`,
+                minWidth: '100%',
+                minHeight: '100%',
                 position: 'relative',
+                flexShrink: 0,
                 background: '#fff',
-                border: 'none',
-                transform: `scale(${builderZoom})`,
-                transformOrigin: 'top left',
-                backgroundImage: gridOn ? 'radial-gradient(var(--da-border) 1px, transparent 1px)' : 'none',
-                backgroundSize: '20px 20px',
-                overflow: 'hidden'
               }}
             >
+              <div
+                ref={canvasRef}
+                style={{
+                  width: `${canvasDimensions.width}px`,
+                  height: `${canvasDimensions.height}px`,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  background: '#fff',
+                  transform: `scale(${builderZoom})`,
+                  transformOrigin: 'top left',
+                  backgroundImage: gridOn ? 'radial-gradient(var(--da-border) 1px, transparent 1px)' : 'none',
+                  backgroundSize: `${canvasDimensions.gridSize}px ${canvasDimensions.gridSize}px`,
+                  overflow: 'hidden',
+                }}
+              >
               {builderObjects.map((obj) => {
                 const isRestroom = obj.elementType?.toLowerCase().includes('restroom') || obj.name?.toLowerCase().includes('restroom');
                 const isPantry = obj.elementType?.toLowerCase().includes('pantry') || obj.name?.toLowerCase().includes('pantry');
                 const isEmergencyExit = obj.elementType?.toLowerCase().includes('exit') || obj.elementType?.toLowerCase().includes('emergency') || obj.name?.toLowerCase().includes('exit') || obj.name?.toLowerCase().includes('emergency');
                 const isAmenity = obj.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+                const isKioskMarker =
+                  obj.elementType === 'KIOSK_YOU_ARE_HERE' ||
+                  obj.elementRole === 'INFORMATION' ||
+                  obj.name?.toLowerCase() === 'you are here';
                 const isWall = obj.elementType?.toLowerCase().includes('wall') || obj.name?.toLowerCase().includes('wall');
                 const contrastColor = getContrastColor(obj.color);
 
@@ -909,10 +1111,11 @@ export function MapEditor() {
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                         fontSize: '11px', fontWeight: 700, textAlign: 'center', cursor: 'pointer',
                         fontFamily: 'var(--da-font-family)', padding: '4px', lineHeight: 1.2,
-                        background: obj.color || (obj.bookable ? 'rgba(200, 244, 81, 0.4)' : '#F3F7F4'),
-                        border: selectedObjId === obj.id ? '2px solid var(--da-brand-dark)' : '1px solid var(--da-border)',
-                        borderRadius: isWall ? '2px' : '8px',
-                        color: contrastColor,
+                        background: isKioskMarker ? (obj.color || '#DC2626') : (obj.color || (obj.bookable ? 'rgba(200, 244, 81, 0.4)' : '#F3F7F4')),
+                        border: selectedObjId === obj.id ? '2px solid var(--da-brand-dark)' : (isKioskMarker ? '2px solid #fff' : '1px solid var(--da-border)'),
+                        borderRadius: isKioskMarker ? '14px' : (isWall ? '2px' : '8px'),
+                        boxShadow: isKioskMarker ? '0 4px 12px rgba(220, 38, 38, 0.35)' : 'none',
+                        color: isKioskMarker ? '#ffffff' : contrastColor,
                         boxSizing: 'border-box',
                         overflow: 'hidden',
                         position: 'relative'
@@ -922,6 +1125,16 @@ export function MapEditor() {
                         <span style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {obj.name}
                         </span>
+                      ) : isKioskMarker ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="You Are Here">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z" fill="#ffffff" stroke="#DC2626" strokeWidth="1.5" />
+                            <circle cx="12" cy="10" r="3" fill="#DC2626" />
+                          </svg>
+                          <span style={{ fontSize: '10px', fontWeight: 800, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            {obj.name || 'You Are Here'}
+                          </span>
+                        </div>
                       ) : isAmenity ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
                           <AmenityIcon type={obj.elementType} name={obj.name} color={contrastColor} />
@@ -965,6 +1178,7 @@ export function MapEditor() {
                 </div>
               );
             })}
+              </div>
             </div>
           )}
         </div>
@@ -1055,7 +1269,7 @@ export function MapEditor() {
               >
                 Rotate ({selectedObj.rotation || 0}°)
               </button>
-              {(!selectedObj.bookable && selectedObj.elementRole !== 'WORKSPACE') && (
+              {(!selectedObj.bookable && selectedObj.elementRole !== 'WORKSPACE' && selectedObj.elementType !== 'KIOSK_YOU_ARE_HERE' && selectedObj.elementRole !== 'INFORMATION') && (
                 <button
                   onClick={() => handleDuplicateObject(selectedObj.id)}
                   style={{ flex: 1, border: '1px solid var(--da-border)', background: 'var(--da-canvas)', color: 'var(--da-brand-dark)', borderRadius: '8px', padding: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}

@@ -1,6 +1,7 @@
 import type {
   AdminPaymentMethod,
   BusinessSettings,
+  CreatePaymentMethodInput,
   UpdateBusinessSettingsInput,
   UpdatePaymentMethodInput,
 } from '../models/settings';
@@ -16,6 +17,7 @@ type BusinessSettingsRow = {
   booking_interval_minutes: number;
   payment_expiry_minutes: number;
   kiosk_timeout_minutes: number | null;
+  landing_preview_photos?: any;
   updated_at: string | null;
 };
 
@@ -77,8 +79,13 @@ export class SupabaseSettingsRepository implements SettingsRepository {
 
   async getBusinessSettings(): Promise<BusinessSettings> {
     const rows = await this.request<BusinessSettingsRow[]>(
-      '/business_settings?select=id,business_name,timezone,contact_email,contact_phone,booking_interval_minutes,payment_expiry_minutes,kiosk_timeout_minutes,updated_at&id=eq.1&limit=1'
-    );
+      '/business_settings?select=id,business_name,timezone,contact_email,contact_phone,booking_interval_minutes,payment_expiry_minutes,kiosk_timeout_minutes,landing_preview_photos,updated_at&id=eq.1&limit=1'
+    ).catch(async () => {
+      // Fallback if landing_preview_photos column is not yet queried
+      return this.request<BusinessSettingsRow[]>(
+        '/business_settings?select=id,business_name,timezone,contact_email,contact_phone,booking_interval_minutes,payment_expiry_minutes,kiosk_timeout_minutes,updated_at&id=eq.1&limit=1'
+      );
+    });
     const row = rows[0];
     if (!row) {
       return {
@@ -90,6 +97,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
         bookingIntervalMinutes: 30,
         paymentExpiryMinutes: 60,
         kioskTimeoutMinutes: 5,
+        landingPreviewPhotos: [],
       };
     }
 
@@ -102,6 +110,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       bookingIntervalMinutes: row.booking_interval_minutes,
       paymentExpiryMinutes: row.payment_expiry_minutes,
       kioskTimeoutMinutes: row.kiosk_timeout_minutes,
+      landingPreviewPhotos: Array.isArray(row.landing_preview_photos) ? row.landing_preview_photos : [],
       updatedAt: row.updated_at,
     };
   }
@@ -121,6 +130,10 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       updated_at: new Date().toISOString(),
     };
 
+    if (input.landingPreviewPhotos !== undefined) {
+      payload.landing_preview_photos = input.landingPreviewPhotos;
+    }
+
     if (updatedByUserId) {
       payload.updated_by_user_id = updatedByUserId;
     }
@@ -133,9 +146,21 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       body: JSON.stringify(payload),
     });
 
-    const row = rows[0];
+    let row = rows[0];
     if (!row) {
-      throw new Error('Failed to update business settings: record not found');
+      const insertPayload = { id: 1, ...payload };
+      const insertRows = await this.request<BusinessSettingsRow[]>('/business_settings', {
+        method: 'POST',
+        headers: {
+          Prefer: 'return=representation,resolution=merge-duplicates',
+        },
+        body: JSON.stringify([insertPayload]),
+      });
+      row = insertRows[0];
+    }
+
+    if (!row) {
+      throw new Error('Failed to update business settings');
     }
 
     return {
@@ -147,6 +172,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       bookingIntervalMinutes: row.booking_interval_minutes,
       paymentExpiryMinutes: row.payment_expiry_minutes,
       kioskTimeoutMinutes: row.kiosk_timeout_minutes,
+      landingPreviewPhotos: Array.isArray(row.landing_preview_photos) ? row.landing_preview_photos : [],
       updatedAt: row.updated_at,
     };
   }
@@ -226,6 +252,55 @@ export class SupabaseSettingsRepository implements SettingsRepository {
     }));
   }
 
+  async createPaymentMethod(input: CreatePaymentMethodInput): Promise<AdminPaymentMethod> {
+    let displayOrder = input.displayOrder;
+    if (displayOrder === undefined) {
+      const existing = await this.listPaymentMethods();
+      const maxOrder = existing.reduce((max, p) => Math.max(max, p.displayOrder), 0);
+      displayOrder = maxOrder + 1;
+    }
+
+    const payload: Record<string, unknown> = {
+      method_type: input.methodType,
+      display_name: input.displayName,
+      account_name: input.accountName ?? null,
+      account_number: input.accountNumber ?? null,
+      qr_image_path: input.qrImagePath ?? null,
+      instructions: input.instructions ?? null,
+      allow_web: input.allowWeb,
+      allow_kiosk: input.allowKiosk,
+      is_active: input.isActive !== undefined ? input.isActive : true,
+      display_order: displayOrder,
+    };
+
+    const rows = await this.request<PaymentMethodRow[]>('/payment_methods', {
+      method: 'POST',
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify([payload]),
+    });
+
+    const row = rows[0];
+    if (!row) {
+      throw new Error('Failed to create payment method');
+    }
+
+    return {
+      id: row.id,
+      methodType: row.method_type,
+      displayName: row.display_name,
+      accountName: row.account_name,
+      accountNumber: row.account_number,
+      qrImagePath: row.qr_image_path,
+      instructions: row.instructions,
+      allowWeb: row.allow_web,
+      allowKiosk: row.allow_kiosk,
+      isActive: row.is_active,
+      displayOrder: row.display_order,
+    };
+  }
+
   async updatePaymentMethod(input: UpdatePaymentMethodInput): Promise<AdminPaymentMethod> {
     const payload: Record<string, unknown> = {
       display_name: input.displayName,
@@ -234,10 +309,15 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       qr_image_path: input.qrImagePath,
       instructions: input.instructions,
       allow_web: input.allowWeb,
+      allowKiosk: input.allowKiosk,
       allow_kiosk: input.allowKiosk,
       is_active: input.isActive,
       updated_at: new Date().toISOString(),
     };
+
+    if (input.methodType) {
+      payload.method_type = input.methodType;
+    }
 
     if (input.displayOrder !== undefined) {
       payload.display_order = input.displayOrder;
@@ -272,6 +352,30 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       isActive: row.is_active,
       displayOrder: row.display_order,
     };
+  }
+
+  async deletePaymentMethod(id: string): Promise<void> {
+    await this.request(`/payment_methods?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorderPaymentMethods(orderedIds: string[]): Promise<AdminPaymentMethod[]> {
+    for (let i = 0; i < orderedIds.length; i++) {
+      const id = orderedIds[i];
+      await this.request(`/payment_methods?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ display_order: i + 1000 }),
+      });
+    }
+    for (let i = 0; i < orderedIds.length; i++) {
+      const id = orderedIds[i];
+      await this.request(`/payment_methods?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ display_order: i + 1 }),
+      });
+    }
+    return this.listPaymentMethods();
   }
 
   async listBusinessScheduleBlocks(): Promise<ScheduleBlock[]> {

@@ -7,8 +7,10 @@ import {
 export interface CounterPaymentRepository {
   listActiveKioskPaymentMethods(): Promise<PaymentMethod[]>;
   getCounterPaymentRecord(paymentAttemptId: string): Promise<CounterPaymentRecord | null>;
+  getCounterPaymentRecordByCode?(code: string): Promise<CounterPaymentRecord | null>;
   confirmCounterPaymentAndAllocate(input: {
-    paymentAttemptId: string;
+    paymentAttemptId?: string;
+    code?: string;
     actorUserId: string;
     processedAt: string;
   }): Promise<PaymentReviewDecisionResult>;

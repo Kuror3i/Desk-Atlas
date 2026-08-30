@@ -5,13 +5,16 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 type Role = 'admin' | 'staff' | 'member' | null;
 
 type User = {
+  id?: string;
+  email?: string;
   role: Role;
   name?: string;
+  token?: string;
 } | null;
 
 type AuthContextType = {
   user: User;
-  login: (role: Exclude<Role, null>, name?: string) => void;
+  login: (role: Exclude<Role, null>, name?: string, details?: { id?: string; email?: string; token?: string }) => void;
   logout: () => void;
 };
 
@@ -32,8 +35,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = (role: Exclude<Role, null>, name?: string) => {
-    const u = { role, name } as User;
+  const login = (role: Exclude<Role, null>, name?: string, details?: { id?: string; email?: string; token?: string }) => {
+    const u = { role, name, ...details } as User;
     setUser(u);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(u));

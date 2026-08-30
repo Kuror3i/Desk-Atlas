@@ -47,6 +47,22 @@ export async function POST(
       return NextResponse.json({ error: "Payment proof file is empty." }, { status: 400 });
     }
 
+    const maxSizeBytes = 10 * 1024 * 1024; // 10MB
+    if (proofFile.size > maxSizeBytes) {
+      return NextResponse.json({ error: "Payment proof file must be under 10MB." }, { status: 400 });
+    }
+
+    const isImage = proofFile.type.startsWith("image/");
+    const isPdf = proofFile.type === "application/pdf";
+    const hasValidExt = /\.(jpg|jpeg|png|webp|gif|pdf|heic|heif)$/i.test(proofFile.name);
+
+    if (!isImage && !isPdf && !hasValidExt) {
+      return NextResponse.json(
+        { error: "Invalid file type. Supported formats are JPG, PNG, WEBP, and PDF." },
+        { status: 400 }
+      );
+    }
+
     const repository = new ReservationSupabaseRepository({ supabaseUrl, serviceRoleKey: supabaseKey });
     const service = createPaymentSessionService(repository);
     const session = await service.getPaymentSession(token);

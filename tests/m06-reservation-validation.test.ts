@@ -186,14 +186,23 @@ expectThrow(() => {
   validateCandidates(candidates, context);
 }, "reject duplicate rank");
 
-// 7. reject duplicate instance
+// 7. reject duplicate instance with same start time
 expectThrow(() => {
   const candidates: CandidateSubmissionDTO[] = [
     { rank: 0, workspaceInstanceId: "inst-1", startAt: "2026-09-01T09:00:00Z", endAt: "2026-09-01T10:00:00Z" },
     { rank: 1, workspaceInstanceId: "inst-1", startAt: "2026-09-01T09:00:00Z", endAt: "2026-09-01T10:00:00Z" }
   ];
   validateCandidates(candidates, context);
-}, "reject duplicate instance");
+}, "reject duplicate instance with same start time");
+
+// 7b. accept same instance with different start time
+runTest("accept same instance with different start time", () => {
+  const candidates: CandidateSubmissionDTO[] = [
+    { rank: 0, workspaceInstanceId: "inst-1", startAt: "2026-09-01T09:00:00Z", endAt: "2026-09-01T10:00:00Z" },
+    { rank: 1, workspaceInstanceId: "inst-1", startAt: "2026-09-01T10:00:00Z", endAt: "2026-09-01T11:00:00Z" }
+  ];
+  validateCandidates(candidates, context);
+});
 
 // 8. reject different tier
 expectThrow(() => {

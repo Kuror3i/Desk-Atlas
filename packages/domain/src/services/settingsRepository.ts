@@ -1,6 +1,7 @@
 import type {
   AdminPaymentMethod,
   BusinessSettings,
+  CreatePaymentMethodInput,
   UpdateBusinessSettingsInput,
   UpdatePaymentMethodInput,
 } from '../models/settings';
@@ -22,7 +23,10 @@ export interface SettingsRepository {
     }>
   ): Promise<OperatingHoursInterval[]>;
   listPaymentMethods(): Promise<AdminPaymentMethod[]>;
+  createPaymentMethod(input: CreatePaymentMethodInput): Promise<AdminPaymentMethod>;
   updatePaymentMethod(input: UpdatePaymentMethodInput): Promise<AdminPaymentMethod>;
+  deletePaymentMethod(id: string): Promise<void>;
+  reorderPaymentMethods?(orderedIds: string[]): Promise<AdminPaymentMethod[]>;
   listBusinessScheduleBlocks(): Promise<ScheduleBlock[]>;
   createScheduleBlock(block: {
     scope: 'BUSINESS' | 'WORKSPACE';

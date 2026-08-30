@@ -29,7 +29,9 @@ function toWorkspaceCard(
     rateAmount: workspace.rateAmount,
     pricingLabel: `PHP ${workspace.rateAmount}/hour`,
     photoPath: workspace.photoPath,
+    photoPosition: workspace.photoPosition,
     capacity: workspace.capacity,
+    tags: workspace.tags,
     status,
     statusLabel: getStatusLabel(status),
     statusGlyph: getStatusGlyph(status),
@@ -40,6 +42,12 @@ function toWorkspaceCard(
     height: element.height,
     shape: element.elementType,
   };
+}
+
+export function getWorkspacePhotoObjectPosition(photoPosition?: { x: number; y: number }): string {
+  const x = typeof photoPosition?.x === "number" ? photoPosition.x : 50;
+  const y = typeof photoPosition?.y === "number" ? photoPosition.y : 50;
+  return `${x}% ${y}%`;
 }
 
 function toWorkspaceStatus(

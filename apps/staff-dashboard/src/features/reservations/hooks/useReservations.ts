@@ -33,13 +33,47 @@ export function useReservations() {
 }
 
 export function useReservationDetail(id: string) {
-  const { reservations, loading, error, refetch } = useReservations();
-  const reservation = reservations.find(r => r.reservationId === id) || null;
-  
+  const [reservation, setReservation] = useState<StaffOperationalReservation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDetail = async () => {
+    if (!id || id.trim() === "") {
+      setReservation(null);
+      setError("Reservation ID is required");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/operations/reservations/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error("Reservation not found");
+        }
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to load operational reservation");
+      }
+      const data = await res.json();
+      setReservation(data.reservation || null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+      setReservation(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDetail();
+  }, [id]);
+
   return {
     reservation,
     loading,
-    error: !loading && !reservation && !error ? 'Reservation not found' : error,
-    refetch
+    error,
+    refetch: fetchDetail,
   };
 }

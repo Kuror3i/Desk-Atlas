@@ -151,8 +151,54 @@ export function normalizeDuplicateInstanceInput(
   };
 }
 
+export function compareWorkspaceInstances(
+  a: {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  },
+  b: {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  }
+): number {
+  const nameA = a.displayName ?? a.name ?? '';
+  const nameB = b.displayName ?? b.name ?? '';
+  const nameComp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+  if (nameComp !== 0) return nameComp;
+
+  const codeA = a.instanceCode ?? '';
+  const codeB = b.instanceCode ?? '';
+  const codeComp = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+  if (codeComp !== 0) return codeComp;
+
+  const createdA = a.createdAt ?? '';
+  const createdB = b.createdAt ?? '';
+  const createdComp = createdA.localeCompare(createdB);
+  if (createdComp !== 0) return createdComp;
+
+  return (a.id ?? '').localeCompare(b.id ?? '');
+}
+
+export function sortWorkspaceInstances<
+  T extends {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  },
+>(instances: T[]): T[] {
+  return [...instances].sort(compareWorkspaceInstances);
+}
+
 export function mapCatalogToAdminSpaces(catalog: WorkspaceCatalog): AdminWorkspaceSpace[] {
-  return catalog.instances
+  return sortWorkspaceInstances(catalog.instances)
     .filter((instance) => instance.operationalStatus !== 'INACTIVE')
     .map(mapInstanceToAdminSpace);
 }
@@ -239,7 +285,11 @@ export function inferAdminType(template: WorkspaceTemplate): AdminWorkspaceType 
 export function createWorkspaceService(repository: WorkspaceRepository) {
   return {
     async listCatalog() {
-      return repository.listCatalog();
+      const catalog = await repository.listCatalog();
+      return {
+        ...catalog,
+        instances: sortWorkspaceInstances(catalog.instances),
+      };
     },
     async listAdminSpaces() {
       return mapCatalogToAdminSpaces(await repository.listCatalog());

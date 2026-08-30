@@ -1,5 +1,20 @@
 export type BusinessOperatingHoursMode = '24_7' | '24_HOURS_SELECTED_DAYS' | 'CUSTOM_HOURS';
 
+export interface LandingPreviewPhoto {
+  id: string;
+  url: string;
+  storagePath?: string | null;
+  position: { x: number; y: number };
+  displayOrder: number;
+}
+
+export interface PublicLandingPreviewPhoto {
+  id: string;
+  url: string;
+  position: { x: number; y: number };
+  displayOrder: number;
+}
+
 export interface BusinessSettings {
   id: number;
   businessName: string;
@@ -9,6 +24,7 @@ export interface BusinessSettings {
   bookingIntervalMinutes: number;
   paymentExpiryMinutes: number;
   kioskTimeoutMinutes: number | null;
+  landingPreviewPhotos?: LandingPreviewPhoto[];
   updatedAt?: string | null;
 }
 
@@ -50,6 +66,7 @@ export interface UpdateBusinessSettingsInput {
   bookingIntervalMinutes: number;
   paymentExpiryMinutes: number;
   kioskTimeoutMinutes?: number | null;
+  landingPreviewPhotos?: LandingPreviewPhoto[];
 }
 
 export interface UpdateOperatingHoursInput {
@@ -65,8 +82,22 @@ export interface UpdateOperatingHoursInput {
   }>;
 }
 
+export interface CreatePaymentMethodInput {
+  methodType: 'GCASH' | 'BANK' | 'CASH';
+  displayName: string;
+  accountName?: string | null;
+  accountNumber?: string | null;
+  qrImagePath?: string | null;
+  instructions?: string | null;
+  allowWeb: boolean;
+  allowKiosk: boolean;
+  isActive?: boolean;
+  displayOrder?: number;
+}
+
 export interface UpdatePaymentMethodInput {
   id: string;
+  methodType?: 'GCASH' | 'BANK' | 'CASH';
   displayName: string;
   accountName?: string | null;
   accountNumber?: string | null;
@@ -76,6 +107,10 @@ export interface UpdatePaymentMethodInput {
   allowKiosk: boolean;
   isActive: boolean;
   displayOrder?: number;
+}
+
+export interface ReorderPaymentMethodsInput {
+  orderedIds: string[];
 }
 
 export interface SettingsOverview {

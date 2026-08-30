@@ -35,6 +35,7 @@ export type {
 } from './models/map';
 export type {
   PublishedFloorMap,
+  PublishedMapAudience,
   PublishedMapElement,
   PublishedMapRepository,
   PublishedMapVersion,
@@ -69,6 +70,7 @@ export type {
 export {
   WorkspaceConflictError,
   WorkspaceValidationError,
+  compareWorkspaceInstances,
   createWorkspaceService,
   getWorkspaceAvailabilityStatus,
   inferAdminType,
@@ -83,6 +85,7 @@ export {
   normalizeDuplicateInstanceInput,
   normalizeUpdateInstanceInput,
   normalizeUpdateTemplateInput,
+  sortWorkspaceInstances,
 } from './services/workspaceService';
 export { InMemoryWorkspaceRepository } from './services/workspaceMemoryRepository';
 export {
@@ -142,5 +145,12 @@ export * from './services/settingsRepository';
 export * from './services/settingsMemoryRepository';
 export * from './services/settingsSupabaseRepository';
 export * from './services/settingsService';
-
-
+export * from './services/staffDashboardService';
+export * from './services/workspaceSupabaseRepository';
+export * from './services/mapViewportService';
+export * from './services/transactionalEmailService';
+export * from './models/auth';
+export * from './services/authRepository';
+export * from './services/authMemoryRepository';
+export * from './services/authSupabaseRepository';
+export * from './services/authService';

@@ -1,2 +1,2 @@
 export { ScannerPage } from './components/ScannerPage';
-export { useBookingLookup } from './hooks/useBookingLookup';
+export { useBookingLookup, extractBookingToken } from './hooks/useBookingLookup';

@@ -18,7 +18,9 @@ export interface WorkspaceMapViewModel {
   rateAmount: number;
   pricingLabel: string;
   photoPath: string | null;
+  photoPosition?: { x: number; y: number };
   capacity: number;
+  tags?: string[];
   status: WorkspaceStatus;
   statusLabel: string;
   statusGlyph: string;

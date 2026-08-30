@@ -7,6 +7,7 @@ import type {
 } from '../models/workspace';
 import type {
   PublishedFloorMap,
+  PublishedMapAudience,
   PublishedMapElement,
   PublishedMapRepository,
   PublishedMapVersion,
@@ -109,7 +110,10 @@ export class SupabasePublishedMapRepository implements PublishedMapRepository {
     return floors.map(mapFloor);
   }
 
-  async loadPublishedFloorMap(floorId: string): Promise<PublishedFloorMap | null> {
+  async loadPublishedFloorMap(
+    floorId: string,
+    _options?: { audience?: PublishedMapAudience }
+  ): Promise<PublishedFloorMap | null> {
     const [floorRow] = await this.request<FloorRow[]>(
       `/floors?select=*&id=eq.${encodeURIComponent(floorId)}&is_active=eq.true&limit=1`
     );
@@ -211,6 +215,8 @@ function mapPublishedWorkspace(row: WorkspaceInstanceRow, floor: FloorRow): Publ
 
   const instance = mapWorkspaceInstanceDetails(row, floor);
   const availability = getWorkspaceAvailabilityStatus(instance);
+  const tags = extractRecommendationTags(instance.template.defaultStyle);
+  const photoPosition = extractPhotoPosition(instance.template.defaultStyle);
 
   return {
     workspaceInstanceId: instance.id,
@@ -221,13 +227,33 @@ function mapPublishedWorkspace(row: WorkspaceInstanceRow, floor: FloorRow): Publ
     templateName: instance.template.name,
     description: instance.template.description,
     photoPath: instance.template.photoPath,
+    photoPosition,
     capacity: instance.template.capacity,
     rateAmount: instance.template.rateAmount,
     pricingUnit: instance.template.pricingUnit,
     operationalStatus: instance.operationalStatus,
     isBookable: availability.isBookable,
     blockingReason: availability.blockingReason as WorkspaceAvailabilityBlockReason | null,
+    tags: tags && tags.length > 0 ? tags : undefined,
   };
+}
+
+function extractPhotoPosition(
+  defaultStyle: Record<string, unknown> | null | undefined
+): { x: number; y: number } | undefined {
+  if (!defaultStyle) return undefined;
+  const pos = defaultStyle.photoPosition as any;
+  if (pos && typeof pos === 'object' && typeof pos.x === 'number' && typeof pos.y === 'number') {
+    return { x: pos.x, y: pos.y };
+  }
+  return undefined;
+}
+
+function extractRecommendationTags(defaultStyle: Record<string, unknown> | null | undefined): string[] | undefined {
+  if (!defaultStyle) return undefined;
+  const tags = defaultStyle.recommendations;
+  if (!Array.isArray(tags)) return undefined;
+  return tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0);
 }
 
 function mapWorkspaceInstanceDetails(row: WorkspaceInstanceRow, floor: FloorRow): WorkspaceInstanceDetails {
@@ -278,6 +304,8 @@ function sanitizeStyle(
     'opacity',
     'icon',
     'amenityType',
+    'markerType',
+    'kioskId',
   ]);
   const sanitized: Record<string, string | number | boolean | null> = {};
 

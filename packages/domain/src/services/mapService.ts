@@ -125,6 +125,13 @@ export async function validateMapForPublish(repository: MapRepository, map: Floo
   );
 }
 
+function isKioskMarkerElement(element: MapElementInput): boolean {
+  return (
+    element.elementType?.toUpperCase() === 'KIOSK_YOU_ARE_HERE' ||
+    (Boolean(element.properties) && element.properties?.markerType === 'KIOSK_YOU_ARE_HERE')
+  );
+}
+
 async function normalizeElements(
   repository: MapRepository,
   floorId: string,
@@ -144,6 +151,12 @@ async function normalizeElements(
   const normalized = elements.map((element, index) =>
     normalizeElementGeometry(element, index, canvasWidth, canvasHeight, gridSize)
   );
+
+  const kioskMarkers = normalized.filter(isKioskMarkerElement);
+  if (kioskMarkers.length > 1) {
+    throw new MapValidationError('A floor map can contain at most one Kiosk You-Are-Here marker');
+  }
+
   const bookable = normalized.filter((element) => element.elementRole === BOOKABLE_ROLE);
 
   if (bookable.length > MAX_BOOKABLE_ELEMENTS_PER_FLOOR) {
@@ -154,7 +167,14 @@ async function normalizeElements(
 
   const seenInstanceIds = new Set<string>();
   for (const element of normalized) {
-    if (element.elementRole === BOOKABLE_ROLE) {
+    if (isKioskMarkerElement(element)) {
+      if (element.workspaceInstanceId) {
+        throw new MapValidationError('Kiosk You-Are-Here marker cannot link to a workspace instance');
+      }
+      if (element.elementRole !== 'INFORMATION') {
+        throw new MapValidationError('Kiosk You-Are-Here marker must have element role INFORMATION');
+      }
+    } else if (element.elementRole === BOOKABLE_ROLE) {
       if (!element.workspaceInstanceId) {
         throw new MapValidationError('Bookable workspace map elements must link to a workspace instance');
       }

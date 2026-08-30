@@ -7,15 +7,15 @@ import { useRouter } from 'next/navigation';
 import type { StaffOperationalReservation, ReservationStatus } from '@deskatlas/domain';
 
 function getStatusDisplay(status: ReservationStatus) {
-  switch(status) {
-    case 'CONFIRMED': return { label: 'Confirmed', color: 'var(--da-primary)', bg: 'var(--da-info)' };
-    case 'CHECKED_IN': return { label: 'Checked In', color: 'var(--da-primary)', bg: 'var(--da-info)' };
-    case 'PENDING_PAYMENT':
-    case 'PAYMENT_UNDER_REVIEW':
-    case 'PENDING_COUNTER_CONFIRMATION':
-      return { label: 'Pending', color: 'var(--da-primary)', bg: 'var(--da-soft)' };
-    case 'NEEDS_MANUAL_RESOLUTION': return { label: 'Needs Attention', color: 'var(--da-primary)', bg: 'var(--da-attention)' };
-    default: return { label: status, color: 'var(--da-text-secondary)', bg: 'var(--da-canvas)' };
+  switch (status) {
+    case 'CONFIRMED':
+      return { label: 'Confirmed', color: 'var(--da-primary)', bg: 'var(--da-info)' };
+    case 'CHECKED_IN':
+      return { label: 'Checked In', color: 'var(--da-primary)', bg: 'var(--da-info)' };
+    case 'COMPLETED':
+      return { label: 'Completed', color: 'var(--da-text-secondary)', bg: 'var(--da-canvas)' };
+    default:
+      return { label: status, color: 'var(--da-text-secondary)', bg: 'var(--da-canvas)' };
   }
 }
 

@@ -3,6 +3,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import {
+  computeFitViewZoom,
+  clampMapZoom,
+  getSavedMapZoom,
+  saveMapZoom,
+  DEFAULT_MAP_CANVAS_WIDTH,
+  DEFAULT_MAP_CANVAS_HEIGHT,
+  DEFAULT_MAP_GRID_SIZE,
+} from '@deskatlas/domain';
 
 function getContrastColor(hexColor?: string): string {
   if (!hexColor || !hexColor.startsWith('#') || hexColor.length < 7) return '#111827';
@@ -70,6 +79,12 @@ export default function WorkspaceMapPage() {
   const [builderZoom, setBuilderZoom] = useState(1);
   const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasDimensions, setCanvasDimensions] = useState({
+    width: DEFAULT_MAP_CANVAS_WIDTH,
+    height: DEFAULT_MAP_CANVAS_HEIGHT,
+    gridSize: DEFAULT_MAP_GRID_SIZE,
+  });
 
   const [loading, setLoading] = useState(true);
   const [loadingMap, setLoadingMap] = useState(false);
@@ -126,7 +141,29 @@ export default function WorkspaceMapPage() {
       const res = await fetch(`/api/admin/maps/published?floorId=${encodeURIComponent(floorId)}`);
       if (res.ok) {
         const data = await res.json();
-        setPublishedMap(data.published || null);
+        const pub = data.published || null;
+        setPublishedMap(pub);
+
+        const canvasW = Number(pub?.version?.canvasWidth) || DEFAULT_MAP_CANVAS_WIDTH;
+        const canvasH = Number(pub?.version?.canvasHeight) || DEFAULT_MAP_CANVAS_HEIGHT;
+        const grid = Number(pub?.version?.gridSize) || DEFAULT_MAP_GRID_SIZE;
+        setCanvasDimensions({ width: canvasW, height: canvasH, gridSize: grid });
+
+        const savedZoom = getSavedMapZoom(floorId);
+        if (savedZoom !== null) {
+          setBuilderZoom(savedZoom);
+        } else if (containerRef.current) {
+          const fitZoom = computeFitViewZoom(
+            containerRef.current.clientWidth,
+            containerRef.current.clientHeight,
+            canvasW,
+            canvasH,
+            0
+          );
+          setBuilderZoom(fitZoom);
+        } else {
+          setBuilderZoom(1);
+        }
       } else {
         setPublishedMap(null);
       }
@@ -141,9 +178,70 @@ export default function WorkspaceMapPage() {
     loadInitialData();
   }, []);
 
+  useEffect(() => {
+    if (!containerRef.current || !selectedFloorId) return;
+    const checkAndFit = () => {
+      if (!containerRef.current) return;
+      const savedZoom = getSavedMapZoom(selectedFloorId);
+      if (savedZoom !== null) {
+        setBuilderZoom(savedZoom);
+      } else if (containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+        const fitZoom = computeFitViewZoom(
+          containerRef.current.clientWidth,
+          containerRef.current.clientHeight,
+          canvasDimensions.width,
+          canvasDimensions.height,
+          0
+        );
+        setBuilderZoom(fitZoom);
+      }
+    };
+
+    const timeout = setTimeout(checkAndFit, 60);
+    window.addEventListener('resize', checkAndFit);
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener('resize', checkAndFit);
+    };
+  }, [selectedFloorId, canvasDimensions.width, canvasDimensions.height, loading, loadingMap]);
+
   const handleFloorChange = async (newFloorId: string) => {
     setSelectedFloorId(newFloorId);
     await loadPublishedMapForFloor(newFloorId);
+  };
+
+  const handleFitView = () => {
+    if (!containerRef.current) {
+      setBuilderZoom(1);
+      return;
+    }
+    const fitZoom = computeFitViewZoom(
+      containerRef.current.clientWidth,
+      containerRef.current.clientHeight,
+      canvasDimensions.width,
+      canvasDimensions.height,
+      0
+    );
+    setBuilderZoom(fitZoom);
+    if (selectedFloorId) {
+      saveMapZoom(selectedFloorId, fitZoom);
+    }
+  };
+
+  const handleZoomIn = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z + 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
+  };
+
+  const handleZoomOut = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z - 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
   };
 
   // Handle status update for an instance from the inspector
@@ -228,10 +326,10 @@ export default function WorkspaceMapPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setBuilderZoom(z => Math.max(0.5, z - 0.1))} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>−</button>
+          <button onClick={handleZoomOut} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>−</button>
           <span style={{ fontSize: '12px', fontFamily: 'var(--da-font-family)', width: '40px', textAlign: 'center' }}>{Math.round(builderZoom * 100)}%</span>
-          <button onClick={() => setBuilderZoom(z => Math.min(2, z + 0.1))} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>+</button>
-          <button onClick={() => setBuilderZoom(1)} style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '6px', padding: '6px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Fit View</button>
+          <button onClick={handleZoomIn} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>+</button>
+          <button onClick={handleFitView} style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '6px', padding: '6px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Fit View</button>
           
           <Link 
             href="/manage/map"
@@ -242,9 +340,23 @@ export default function WorkspaceMapPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0, width: '100%' }}>
         {/* Canvas Area */}
-        <div style={{ flex: 1, overflow: 'hidden', background: '#F1F8F3', position: 'relative' }}>
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflow: 'auto',
+            background: '#fff',
+            position: 'relative',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'flex-start',
+          }}
+        >
           {loading || loadingMap ? (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--da-text-secondary)', fontSize: '14px', fontFamily: 'var(--da-font-family)' }}>
               Loading workspace map...
@@ -272,21 +384,35 @@ export default function WorkspaceMapPage() {
             </div>
           ) : (
             /* Published Map Canvas View */
-            <div 
-              ref={canvasRef}
-              style={{ 
-                width: `${100 / builderZoom}%`, 
-                height: `${100 / builderZoom}%`, 
-                position: 'relative', 
-                background: '#fff', 
-                border: 'none', 
-                transform: `scale(${builderZoom})`, 
-                transformOrigin: 'top left', 
-                backgroundImage: 'radial-gradient(var(--da-border) 1px, transparent 1px)', 
-                backgroundSize: '20px 20px',
-                overflow: 'hidden'
+            <div
+              style={{
+                width: `${canvasDimensions.width * builderZoom}px`,
+                height: `${canvasDimensions.height * builderZoom}px`,
+                minWidth: '100%',
+                minHeight: '100%',
+                position: 'relative',
+                flexShrink: 0,
+                background: '#fff',
               }}
             >
+              <div 
+                ref={canvasRef}
+                style={{ 
+                  width: `${canvasDimensions.width}px`, 
+                  height: `${canvasDimensions.height}px`, 
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  background: '#fff', 
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
+                  transform: `scale(${builderZoom})`, 
+                  transformOrigin: 'top left', 
+                  backgroundImage: 'radial-gradient(var(--da-border) 1px, transparent 1px)', 
+                  backgroundSize: `${canvasDimensions.gridSize}px ${canvasDimensions.gridSize}px`,
+                  overflow: 'hidden'
+                }}
+              >
               {elements.map((el: any) => {
                 const isWorkspace = el.elementRole === 'WORKSPACE';
                 const isWall = el.elementType?.toLowerCase().includes('wall') || el.elementType?.toLowerCase().includes('thin') || el.elementType?.toLowerCase().includes('glass') || el.elementType?.toLowerCase().includes('separator');
@@ -299,18 +425,23 @@ export default function WorkspaceMapPage() {
                 const isPantry = el.elementType?.toLowerCase().includes('pantry') || el.label?.toLowerCase().includes('pantry');
                 const isEmergencyExit = el.elementType?.toLowerCase().includes('exit') || el.elementType?.toLowerCase().includes('emergency') || el.label?.toLowerCase().includes('exit') || el.label?.toLowerCase().includes('emergency');
                 const isAmenity = el.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+                const isKioskMarker =
+                  el.elementType === 'KIOSK_YOU_ARE_HERE' ||
+                  el.elementRole === 'INFORMATION' ||
+                  el.properties?.markerType === 'KIOSK_YOU_ARE_HERE' ||
+                  el.label?.toLowerCase() === 'you are here';
 
                 let defaultAmenityColor = '#F3F7F4';
                 if (isRestroom) defaultAmenityColor = '#E0F2FE';
                 else if (isPantry) defaultAmenityColor = '#FEF3C7';
                 else if (isEmergencyExit) defaultAmenityColor = '#DCFCE7';
 
-                const displayName = inst?.displayName || el.label || tmpl?.name || el.elementType;
-                const itemColor = el.properties?.color || tmpl?.defaultColor || (isWorkspace ? '#009689' : (isAmenity ? defaultAmenityColor : (isWall ? '#334155' : '#F3F7F4')));
+                const displayName = inst?.displayName || el.label || (isKioskMarker ? 'You Are Here' : (tmpl?.name || el.elementType));
+                const itemColor = el.properties?.color || tmpl?.defaultColor || (isWorkspace ? '#009689' : (isKioskMarker ? '#DC2626' : (isAmenity ? defaultAmenityColor : (isWall ? '#334155' : '#F3F7F4'))));
 
                 let bg = el.properties?.color || itemColor;
-                let textColor = getContrastColor(bg);
-                let border = isSelected ? '3px solid var(--da-brand-dark)' : '1px solid rgba(0, 0, 0, 0.15)';
+                let textColor = isKioskMarker ? '#ffffff' : getContrastColor(bg);
+                let border = isSelected ? '3px solid var(--da-brand-dark)' : (isKioskMarker ? '2px solid #fff' : '1px solid rgba(0, 0, 0, 0.15)');
 
                 if (isWorkspace) {
                   if (status === 'MAINTENANCE') {
@@ -356,11 +487,11 @@ export default function WorkspaceMapPage() {
                         lineHeight: 1.2,
                         background: bg,
                         border: border,
-                        borderRadius: isWall ? '2px' : '8px',
+                        borderRadius: isKioskMarker ? '14px' : (isWall ? '2px' : '8px'),
+                        boxShadow: isKioskMarker ? '0 4px 12px rgba(220, 38, 38, 0.35)' : (isSelected ? '0 0 0 2px var(--da-brand-dark)' : 'none'),
                         color: textColor,
                         position: 'relative',
                         overflow: 'hidden',
-                        boxShadow: isSelected ? '0 0 0 2px var(--da-brand-dark)' : 'none',
                         transition: 'all 0.15s ease',
                       }}
                     >
@@ -375,6 +506,16 @@ export default function WorkspaceMapPage() {
                             </span>
                           )}
                         </>
+                      ) : isKioskMarker ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="You Are Here">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z" fill="#ffffff" stroke="#DC2626" strokeWidth="1.5" />
+                            <circle cx="12" cy="10" r="3" fill="#DC2626" />
+                          </svg>
+                          <span style={{ fontSize: '10px', fontWeight: 800, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            {displayName}
+                          </span>
+                        </div>
                       ) : isAmenity ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
                           <AmenityIcon type={el.elementType} name={displayName} color={textColor} />
@@ -387,6 +528,7 @@ export default function WorkspaceMapPage() {
                   </div>
                 );
               })}
+              </div>
             </div>
           )}
         </div>

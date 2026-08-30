@@ -2,46 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminPaymentReviewService } from "../../../_lib/paymentReviewService";
 import { paymentReviewErrorResponse } from "../../../_lib/errors";
 import {
+  buildReservationTrackingUrl,
   createBookingAccessService,
+  createTransactionalEmailService,
   hashBookingToken,
   ReservationSupabaseRepository,
 } from "@deskatlas/domain";
 
 export const runtime = "nodejs";
-
-async function dispatchBookingConfirmationEmail(input: {
-  to: string;
-  customerFirstName: string;
-  customerLastName: string;
-  referenceCode: string;
-  workspaceDisplayName: string;
-  workspaceTemplateName: string;
-  floorName: string;
-  bookingStartAt: string;
-  bookingEndAt: string;
-  bookingAccessUrl: string;
-  bookingToken: string;
-  qrIssuedAt: string;
-}) {
-  const webhookUrl = process.env.TRANSACTIONAL_EMAIL_WEBHOOK_URL;
-
-  if (!webhookUrl) {
-    console.info(
-      "Booking confirmation email dispatch skipped; no TRANSACTIONAL_EMAIL_WEBHOOK_URL configured.",
-      input
-    );
-    return;
-  }
-
-  await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      template: "booking-confirmed",
-      ...input,
-    }),
-  });
-}
 
 export async function POST(
   request: NextRequest,
@@ -103,6 +71,11 @@ export async function POST(
       const bookingAccessBaseUrl =
         process.env.BOOKING_ACCESS_BASE_URL ??
         `${request.nextUrl.origin.replace(/\/$/, "")}/api/booking`;
+      const trackingBaseUrl =
+        process.env.TRACKING_BASE_URL ??
+        process.env.DESKATLAS_PUBLIC_APP_URL ??
+        request.nextUrl.origin.replace(/\/$/, "");
+      const trackingUrl = buildReservationTrackingUrl(trackingBaseUrl, result.reservationReferenceCode);
       const bookingAccess = await bookingAccessService.issueBookingAccess(
         result.reservationId,
         result.reservationReferenceCode,
@@ -115,7 +88,8 @@ export async function POST(
         );
 
         if (bookingAccessRecord) {
-          await dispatchBookingConfirmationEmail({
+          const emailService = createTransactionalEmailService();
+          await emailService.sendBookingConfirmationEmail({
             to: reviewDetail.customerEmail,
             customerFirstName: reviewDetail.customerFirstName,
             customerLastName: reviewDetail.customerLastName,
@@ -128,6 +102,7 @@ export async function POST(
             bookingAccessUrl: bookingAccess.accessUrl,
             bookingToken: bookingAccess.token,
             qrIssuedAt: bookingAccess.issuedAt,
+            trackingUrl,
           });
         }
       }

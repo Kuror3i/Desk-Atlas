@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type {
   BusinessOperatingHoursMode,
   BusinessSettings,
@@ -8,6 +8,7 @@ import type {
   AdminPaymentMethod,
   BusinessClosureException,
   BusinessClosureType,
+  LandingPreviewPhoto,
 } from '@deskatlas/domain';
 
 const DAY_NAMES = [
@@ -34,13 +35,14 @@ const TIMEZONES = [
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<
-    'Business Profile' | 'Business Hours' | 'Payment Methods' | 'Closures & Holidays' | 'Kiosk Settings'
+    'Business Profile' | 'Business Hours' | 'Payment Methods' | 'Closures & Holidays' | 'Landing Preview' | 'Kiosk Settings'
   >('Business Profile');
-  const tabs: Array<'Business Profile' | 'Business Hours' | 'Payment Methods' | 'Closures & Holidays' | 'Kiosk Settings'> = [
+  const tabs: Array<'Business Profile' | 'Business Hours' | 'Payment Methods' | 'Closures & Holidays' | 'Landing Preview' | 'Kiosk Settings'> = [
     'Business Profile',
     'Business Hours',
     'Payment Methods',
     'Closures & Holidays',
+    'Landing Preview',
     'Kiosk Settings',
   ];
 
@@ -59,7 +61,14 @@ export function Settings() {
     bookingIntervalMinutes: 30,
     paymentExpiryMinutes: 60,
     kioskTimeoutMinutes: 5,
+    landingPreviewPhotos: [],
   });
+
+  const [landingPreviewPhotos, setLandingPreviewPhotos] = useState<LandingPreviewPhoto[]>([]);
+  const [uploadingSlot, setUploadingSlot] = useState<number | null>(null);
+  const [adjustingSlot, setAdjustingSlot] = useState<number | null>(null);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
+  const dragStartRef = useRef<{ x: number; y: number; posX: number; posY: number } | null>(null);
 
   const [hoursMode, setHoursMode] = useState<BusinessOperatingHoursMode>('CUSTOM_HOURS');
   const [daySchedules, setDaySchedules] = useState<
@@ -81,6 +90,33 @@ export function Settings() {
   );
 
   const [paymentMethods, setPaymentMethods] = useState<AdminPaymentMethod[]>([]);
+  const [isAddPaymentModalOpen, setIsAddPaymentModalOpen] = useState(false);
+  const [uploadingQrId, setUploadingQrId] = useState<string | null>(null);
+  const [viewingQrUrl, setViewingQrUrl] = useState<string | null>(null);
+  const [addPaymentForm, setAddPaymentForm] = useState<{
+    methodType: 'GCASH' | 'BANK';
+    providerPreset: string;
+    displayName: string;
+    accountName: string;
+    accountNumber: string;
+    instructions: string;
+    qrImagePath: string | null;
+    allowWeb: boolean;
+    allowKiosk: boolean;
+    isActive: boolean;
+  }>({
+    methodType: 'GCASH',
+    providerPreset: 'GCASH',
+    displayName: 'GCash',
+    accountName: '',
+    accountNumber: '',
+    instructions: 'Scan QR code or transfer to mobile number, then upload the payment confirmation screenshot.',
+    qrImagePath: null,
+    allowWeb: true,
+    allowKiosk: false,
+    isActive: true,
+  });
+
   const [closures, setClosures] = useState<BusinessClosureException[]>([]);
   const [closuresLoading, setClosuresLoading] = useState(false);
 
@@ -112,6 +148,9 @@ export function Settings() {
 
       if (overview?.businessSettings) {
         setBusinessSettings(overview.businessSettings);
+        if (Array.isArray(overview.businessSettings.landingPreviewPhotos)) {
+          setLandingPreviewPhotos(overview.businessSettings.landingPreviewPhotos);
+        }
       }
 
       if (overview?.operatingHoursConfig) {
@@ -150,6 +189,198 @@ export function Settings() {
       setLoading(false);
     }
   }
+
+  const handlePhotoMouseDown = (slotIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
+    if (adjustingSlot !== slotIndex) return;
+    e.preventDefault();
+    const photo = landingPreviewPhotos.find((p) => p.displayOrder === slotIndex) || landingPreviewPhotos[slotIndex];
+    const posX = photo?.position?.x ?? 50;
+    const posY = photo?.position?.y ?? 50;
+    dragStartRef.current = { x: e.clientX, y: e.clientY, posX, posY };
+    setIsDraggingPhoto(true);
+  };
+
+  const handlePhotoMouseMove = (slotIndex: number, e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingPhoto || !dragStartRef.current || adjustingSlot !== slotIndex) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const deltaX = e.clientX - dragStartRef.current.x;
+    const deltaY = e.clientY - dragStartRef.current.y;
+    const newX = Math.max(0, Math.min(100, dragStartRef.current.posX - (deltaX / rect.width) * 100));
+    const newY = Math.max(0, Math.min(100, dragStartRef.current.posY - (deltaY / rect.height) * 100));
+    
+    setLandingPreviewPhotos((prev) => {
+      const updated = [...prev];
+      const idx = updated.findIndex((p) => p.displayOrder === slotIndex);
+      if (idx !== -1) {
+        updated[idx] = {
+          ...updated[idx],
+          position: { x: Math.round(newX), y: Math.round(newY) },
+        };
+      } else if (slotIndex < updated.length) {
+        updated[slotIndex] = {
+          ...updated[slotIndex],
+          position: { x: Math.round(newX), y: Math.round(newY) },
+        };
+      }
+      return updated;
+    });
+  };
+
+  const handlePhotoMouseUp = () => {
+    setIsDraggingPhoto(false);
+    dragStartRef.current = null;
+  };
+
+  const handlePhotoTouchStart = (slotIndex: number, e: React.TouchEvent<HTMLDivElement>) => {
+    if (adjustingSlot !== slotIndex) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const photo = landingPreviewPhotos.find((p) => p.displayOrder === slotIndex) || landingPreviewPhotos[slotIndex];
+    const posX = photo?.position?.x ?? 50;
+    const posY = photo?.position?.y ?? 50;
+    dragStartRef.current = { x: touch.clientX, y: touch.clientY, posX, posY };
+    setIsDraggingPhoto(true);
+  };
+
+  const handlePhotoTouchMove = (slotIndex: number, e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isDraggingPhoto || !dragStartRef.current || adjustingSlot !== slotIndex) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const deltaX = touch.clientX - dragStartRef.current.x;
+    const deltaY = touch.clientY - dragStartRef.current.y;
+    const newX = Math.max(0, Math.min(100, dragStartRef.current.posX - (deltaX / rect.width) * 100));
+    const newY = Math.max(0, Math.min(100, dragStartRef.current.posY - (deltaY / rect.height) * 100));
+
+    setLandingPreviewPhotos((prev) => {
+      const updated = [...prev];
+      const idx = updated.findIndex((p) => p.displayOrder === slotIndex);
+      if (idx !== -1) {
+        updated[idx] = {
+          ...updated[idx],
+          position: { x: Math.round(newX), y: Math.round(newY) },
+        };
+      } else if (slotIndex < updated.length) {
+        updated[slotIndex] = {
+          ...updated[slotIndex],
+          position: { x: Math.round(newX), y: Math.round(newY) },
+        };
+      }
+      return updated;
+    });
+  };
+
+  const handlePhotoTouchEnd = () => {
+    setIsDraggingPhoto(false);
+    dragStartRef.current = null;
+  };
+
+  const handleUploadLandingPhoto = async (slotIndex: number, file: File) => {
+    const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      setErrorMsg('Invalid file type. Allowed formats: PNG, JPG, JPEG, WebP');
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorMsg('File size exceeds 5MB limit');
+      return;
+    }
+
+    try {
+      setUploadingSlot(slotIndex);
+      setErrorMsg(null);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/admin/workspaces/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to upload preview image');
+      }
+
+      const data = await res.json();
+      const newPhoto: LandingPreviewPhoto = {
+        id: `preview-${Date.now()}-${slotIndex}`,
+        url: data.url,
+        storagePath: data.path || null,
+        position: { x: 50, y: 50 },
+        displayOrder: slotIndex,
+      };
+
+      setLandingPreviewPhotos((prev) => {
+        const currentSorted = [...prev].sort((a, b) => a.displayOrder - b.displayOrder);
+        const existingIdx = currentSorted.findIndex((p) => p.displayOrder === slotIndex);
+        if (existingIdx !== -1) {
+          currentSorted[existingIdx] = newPhoto;
+        } else {
+          currentSorted.push(newPhoto);
+        }
+        return currentSorted.sort((a, b) => a.displayOrder - b.displayOrder).slice(0, 3);
+      });
+
+      setAdjustingSlot(slotIndex);
+      showSuccess(`Photo uploaded to Slot ${slotIndex + 1}! Drag to reposition and click Done.`);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to upload preview photo');
+    } finally {
+      setUploadingSlot(null);
+    }
+  };
+
+  const handleRemoveLandingPhoto = (slotIndex: number) => {
+    setLandingPreviewPhotos((prev) => {
+      const remaining = prev
+        .filter((p) => p.displayOrder !== slotIndex)
+        .map((p, idx) => ({ ...p, displayOrder: idx }));
+      return remaining;
+    });
+    if (adjustingSlot === slotIndex) {
+      setAdjustingSlot(null);
+    }
+    showSuccess(`Slot ${slotIndex + 1} photo removed`);
+  };
+
+  const handleSaveLandingPreview = async () => {
+    try {
+      setSaving(true);
+      setErrorMsg(null);
+      const sortedPhotos = [...landingPreviewPhotos]
+        .sort((a, b) => a.displayOrder - b.displayOrder)
+        .map((p, idx) => ({ ...p, displayOrder: idx }));
+
+      const res = await fetch('/api/admin/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...businessSettings,
+          landingPreviewPhotos: sortedPhotos,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Failed to save landing preview photos');
+      }
+
+      const json = await res.json();
+      setBusinessSettings(json.data);
+      if (json.data.landingPreviewPhotos) {
+        setLandingPreviewPhotos(json.data.landingPreviewPhotos);
+      }
+      setAdjustingSlot(null);
+      showSuccess('Landing preview photos saved successfully!');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save landing preview photos');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   async function fetchClosures() {
     try {
@@ -370,6 +601,334 @@ export function Settings() {
       setErrorMsg(err.message || 'Failed to save operating hours');
     } finally {
       setSaving(false);
+    }
+  }
+
+  const PROVIDER_PRESETS = [
+    {
+      id: 'GCASH',
+      name: 'GCash',
+      methodType: 'GCASH' as const,
+      instructions: 'Transfer via GCash to mobile number or scan the QR code, then upload your proof screenshot.',
+      badgeBg: '#E0F2FE',
+      badgeColor: '#0284C7',
+      badgeBorder: '#BAE6FD',
+    },
+    {
+      id: 'MAYA',
+      name: 'Maya',
+      methodType: 'BANK' as const,
+      instructions: 'Send to Maya account / Maya Bank or scan QR code, then upload transaction screenshot.',
+      badgeBg: '#DCFCE7',
+      badgeColor: '#15803D',
+      badgeBorder: '#BBF7D0',
+    },
+    {
+      id: 'MARIBANK',
+      name: 'MariBank',
+      methodType: 'BANK' as const,
+      instructions: 'Transfer to MariBank account or scan QR code, then upload transfer confirmation screenshot.',
+      badgeBg: '#FFEDD5',
+      badgeColor: '#C2410C',
+      badgeBorder: '#FED7AA',
+    },
+    {
+      id: 'BDO',
+      name: 'BDO Unibank',
+      methodType: 'BANK' as const,
+      instructions: 'Transfer to BDO account or scan QR code, then upload deposit slip or transfer screenshot.',
+      badgeBg: '#EFF6FF',
+      badgeColor: '#1D4ED8',
+      badgeBorder: '#BFDBFE',
+    },
+    {
+      id: 'BPI',
+      name: 'Bank of the Philippine Islands (BPI)',
+      methodType: 'BANK' as const,
+      instructions: 'Transfer to BPI account or scan QR code, then upload transfer confirmation screenshot.',
+      badgeBg: '#FEE2E2',
+      badgeColor: '#B91C1C',
+      badgeBorder: '#FECACA',
+    },
+    {
+      id: 'UNIONBANK',
+      name: 'UnionBank of the Philippines',
+      methodType: 'BANK' as const,
+      instructions: 'Transfer to UnionBank account or scan QR code, then upload transaction receipt screenshot.',
+      badgeBg: '#FEF3C7',
+      badgeColor: '#D97706',
+      badgeBorder: '#FDE68A',
+    },
+    {
+      id: 'OTHER_BANK',
+      name: 'Other Bank Transfer',
+      methodType: 'BANK' as const,
+      instructions: 'Transfer to bank account or scan QR code, then upload transaction receipt screenshot.',
+      badgeBg: '#F3E8FF',
+      badgeColor: '#7E22CE',
+      badgeBorder: '#E9D5FF',
+    },
+  ];
+
+  function getMethodProviderInfo(method: AdminPaymentMethod) {
+    const name = method.displayName.toLowerCase();
+    if (method.methodType === 'GCASH' || name.includes('gcash')) {
+      return {
+        label: 'GCash',
+        type: 'GCASH',
+        badgeBg: '#E0F2FE',
+        badgeColor: '#0284C7',
+        badgeBorder: '#BAE6FD',
+        icon: '📱',
+      };
+    }
+    if (name.includes('maya')) {
+      return {
+        label: 'Maya',
+        type: 'BANK',
+        badgeBg: '#DCFCE7',
+        badgeColor: '#15803D',
+        badgeBorder: '#BBF7D0',
+        icon: '💚',
+      };
+    }
+    if (name.includes('mari') || name.includes('seabank')) {
+      return {
+        label: 'MariBank',
+        type: 'BANK',
+        badgeBg: '#FFEDD5',
+        badgeColor: '#C2410C',
+        badgeBorder: '#FED7AA',
+        icon: '🏦',
+      };
+    }
+    if (name.includes('bdo')) {
+      return {
+        label: 'BDO',
+        type: 'BANK',
+        badgeBg: '#EFF6FF',
+        badgeColor: '#1D4ED8',
+        badgeBorder: '#BFDBFE',
+        icon: '🏦',
+      };
+    }
+    if (name.includes('bpi')) {
+      return {
+        label: 'BPI',
+        type: 'BANK',
+        badgeBg: '#FEE2E2',
+        badgeColor: '#B91C1C',
+        badgeBorder: '#FECACA',
+        icon: '🏦',
+      };
+    }
+    if (name.includes('union')) {
+      return {
+        label: 'UnionBank',
+        type: 'BANK',
+        badgeBg: '#FEF3C7',
+        badgeColor: '#D97706',
+        badgeBorder: '#FDE68A',
+        icon: '🏦',
+      };
+    }
+    if (method.methodType === 'CASH') {
+      return {
+        label: 'Cash',
+        type: 'CASH',
+        badgeBg: '#ECFDF5',
+        badgeColor: '#047857',
+        badgeBorder: '#A7F3D0',
+        icon: '💵',
+      };
+    }
+    return {
+      label: 'Bank',
+      type: 'BANK',
+      badgeBg: '#F3E8FF',
+      badgeColor: '#7E22CE',
+      badgeBorder: '#E9D5FF',
+      icon: '🏦',
+    };
+  }
+
+  function handlePresetSelect(presetId: string) {
+    const preset = PROVIDER_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setAddPaymentForm((prev) => ({
+      ...prev,
+      providerPreset: presetId,
+      methodType: preset.methodType,
+      displayName: preset.name,
+      instructions: preset.instructions,
+    }));
+  }
+
+  async function handleUploadPaymentQr(methodId: string | 'new', file: File) {
+    const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      setErrorMsg('Invalid file type. Allowed formats: PNG, JPG, JPEG, WebP');
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorMsg('File size exceeds 5MB limit');
+      return;
+    }
+
+    try {
+      setUploadingQrId(methodId);
+      setErrorMsg(null);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/admin/settings/payment-methods/upload-qr', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to upload QR image');
+      }
+
+      const data = await res.json();
+      const qrUrl = data.url;
+
+      if (methodId === 'new') {
+        setAddPaymentForm((prev) => ({ ...prev, qrImagePath: qrUrl }));
+      } else {
+        const updatedMethods = paymentMethods.map((m) =>
+          m.id === methodId ? { ...m, qrImagePath: qrUrl } : m
+        );
+        setPaymentMethods(updatedMethods);
+        const targetMethod = updatedMethods.find((m) => m.id === methodId);
+        if (targetMethod) {
+          await handleSavePaymentMethod(targetMethod);
+        }
+      }
+      showSuccess('Receiving QR code uploaded successfully!');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to upload QR code');
+    } finally {
+      setUploadingQrId(null);
+    }
+  }
+
+  async function handleCreatePaymentMethod(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addPaymentForm.displayName.trim()) {
+      setErrorMsg('Display name is required');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setErrorMsg(null);
+
+      const res = await fetch('/api/admin/settings/payment-methods', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          methodType: addPaymentForm.methodType,
+          displayName: addPaymentForm.displayName.trim(),
+          accountName: addPaymentForm.accountName.trim() || null,
+          accountNumber: addPaymentForm.accountNumber.trim() || null,
+          instructions: addPaymentForm.instructions.trim() || null,
+          qrImagePath: addPaymentForm.qrImagePath,
+          allowWeb: addPaymentForm.allowWeb,
+          allowKiosk: addPaymentForm.allowKiosk,
+          isActive: addPaymentForm.isActive,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Failed to create payment method');
+      }
+
+      const json = await res.json();
+      setPaymentMethods((prev) => [...prev, json.data].sort((a, b) => a.displayOrder - b.displayOrder));
+      setIsAddPaymentModalOpen(false);
+      setAddPaymentForm({
+        methodType: 'GCASH',
+        providerPreset: 'GCASH',
+        displayName: 'GCash',
+        accountName: '',
+        accountNumber: '',
+        instructions: 'Transfer via GCash to mobile number or scan the QR code, then upload your proof screenshot.',
+        qrImagePath: null,
+        allowWeb: true,
+        allowKiosk: false,
+        isActive: true,
+      });
+      showSuccess(`Payment method "${json.data.displayName}" added successfully!`);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to create payment method');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeletePaymentMethod(id: string, displayName: string) {
+    if (!confirm(`Are you sure you want to delete payment method "${displayName}"?`)) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setErrorMsg(null);
+
+      const res = await fetch(`/api/admin/settings/payment-methods?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Failed to delete payment method');
+      }
+
+      setPaymentMethods((prev) => prev.filter((m) => m.id !== id));
+      showSuccess(`Payment method "${displayName}" deleted!`);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to delete payment method');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleMovePaymentMethod(idx: number, direction: 'up' | 'down') {
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= paymentMethods.length) return;
+
+    const updated = [...paymentMethods];
+    const item = updated[idx];
+    updated[idx] = updated[targetIdx];
+    updated[targetIdx] = item;
+
+    const reorderedWithOrders = updated.map((m, i) => ({
+      ...m,
+      displayOrder: i + 1,
+    }));
+
+    setPaymentMethods(reorderedWithOrders);
+
+    try {
+      const res = await fetch('/api/admin/settings/payment-methods', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderedIds: reorderedWithOrders.map((m) => m.id),
+        }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Failed to reorder payment methods');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save reordered list');
+      fetchSettings();
     }
   }
 
@@ -757,156 +1316,342 @@ export function Settings() {
           {/* TAB 3: Payment Methods */}
           {activeTab === 'Payment Methods' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)' }}>
-                Configure online and in-person payment channels. Online methods support 1-hour proof uploads; counter payment methods are used for kiosk and desk transactions.
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--da-text-secondary)', maxWidth: '520px' }}>
+                  Configure online and in-person payment channels. Online methods support 1-hour proof uploads; counter payment methods are used for kiosk and desk transactions.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePresetSelect('GCASH');
+                    setIsAddPaymentModalOpen(true);
+                  }}
+                  style={{
+                    background: 'var(--da-brand-dark)',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <span>+</span> Add Payment Method
+                </button>
               </div>
 
               {paymentMethods.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#94A3B8' }}>
-                  No payment methods configured in database.
+                <div style={{ textAlign: 'center', padding: '30px 20px', color: '#94A3B8', border: '1px dashed var(--da-border)', borderRadius: '10px' }}>
+                  No payment methods configured yet. Click <strong>+ Add Payment Method</strong> above to add GCash or Bank options.
                 </div>
               ) : (
-                paymentMethods.map((method, idx) => (
-                  <div 
-                    key={method.id}
-                    style={{ 
-                      border: '1px solid var(--da-border)', borderRadius: '10px', padding: '18px',
-                      background: method.isActive ? '#FFFFFF' : '#F8FAFC'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ 
-                          fontSize: '11px', fontWeight: 800, padding: '3px 8px', borderRadius: '4px',
-                          background: method.methodType === 'GCASH' ? '#DBEAFE' : method.methodType === 'BANK' ? '#EDE9FE' : '#DCFCE7',
-                          color: method.methodType === 'GCASH' ? '#1E40AF' : method.methodType === 'BANK' ? '#5B21B6' : '#166534'
-                        }}>
-                          {method.methodType}
-                        </span>
-                        <input 
-                          type="text"
-                          value={method.displayName}
-                          onChange={(e) => {
-                            const updated = [...paymentMethods];
-                            updated[idx] = { ...method, displayName: e.target.value };
-                            setPaymentMethods(updated);
-                          }}
-                          style={{ fontWeight: 700, fontSize: '14px', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '4px 8px' }}
-                        />
-                      </div>
+                paymentMethods.map((method, idx) => {
+                  const providerInfo = getMethodProviderInfo(method);
+                  const isFirst = idx === 0;
+                  const isLast = idx === paymentMethods.length - 1;
+                  const isUploadingQr = uploadingQrId === method.id;
 
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>
-                        <input 
-                          type="checkbox"
-                          checked={method.isActive}
-                          onChange={(e) => {
-                            const updated = [...paymentMethods];
-                            updated[idx] = { ...method, isActive: e.target.checked };
-                            setPaymentMethods(updated);
-                          }}
-                          style={{ cursor: 'pointer' }}
-                        />
-                        {method.isActive ? 'Active' : 'Inactive'}
-                      </label>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
-                          Account / Receiver Name
-                        </label>
-                        <input 
-                          type="text"
-                          value={method.accountName || ''}
-                          onChange={(e) => {
-                            const updated = [...paymentMethods];
-                            updated[idx] = { ...method, accountName: e.target.value || null };
-                            setPaymentMethods(updated);
-                          }}
-                          placeholder="e.g. DeskAtlas Corp"
-                          style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
-                          Account / Mobile Number
-                        </label>
-                        <input 
-                          type="text"
-                          value={method.accountNumber || ''}
-                          onChange={(e) => {
-                            const updated = [...paymentMethods];
-                            updated[idx] = { ...method, accountNumber: e.target.value || null };
-                            setPaymentMethods(updated);
-                          }}
-                          placeholder="e.g. 09171234567"
-                          style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}
-                        />
-                      </div>
-                    </div>
-
-                    <div style={{ marginBottom: '14px' }}>
-                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
-                        Customer Instructions
-                      </label>
-                      <textarea 
-                        rows={2}
-                        value={method.instructions || ''}
-                        onChange={(e) => {
-                          const updated = [...paymentMethods];
-                          updated[idx] = { ...method, instructions: e.target.value || null };
-                          setPaymentMethods(updated);
-                        }}
-                        placeholder="Instructions displayed on payment screen..."
-                        style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--da-font-family)' }}
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--da-border-light)', paddingTop: '12px' }}>
-                      <div style={{ display: 'flex', gap: '16px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: method.methodType === 'CASH' ? 'not-allowed' : 'pointer' }}>
+                  return (
+                    <div 
+                      key={method.id}
+                      style={{ 
+                        border: '1px solid var(--da-border)', borderRadius: '12px', padding: '20px',
+                        background: method.isActive ? '#FFFFFF' : '#F8FAFC',
+                        boxShadow: 'var(--da-shadow-sm)',
+                      }}
+                    >
+                      {/* Top bar: Provider Badge, Display Name, Move Up/Down, Active Toggle, Delete */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '240px' }}>
+                          <span style={{ 
+                            fontSize: '11px', fontWeight: 800, padding: '4px 10px', borderRadius: '6px',
+                            background: providerInfo.badgeBg,
+                            color: providerInfo.badgeColor,
+                            border: `1px solid ${providerInfo.badgeBorder}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}>
+                            <span>{providerInfo.icon}</span>
+                            <span>{providerInfo.label}</span>
+                          </span>
                           <input 
-                            type="checkbox"
-                            checked={method.allowWeb}
-                            disabled={method.methodType === 'CASH'}
+                            type="text"
+                            value={method.displayName}
                             onChange={(e) => {
                               const updated = [...paymentMethods];
-                              updated[idx] = { ...method, allowWeb: e.target.checked };
+                              updated[idx] = { ...method, displayName: e.target.value };
                               setPaymentMethods(updated);
                             }}
+                            placeholder="Display Name"
+                            style={{ fontWeight: 700, fontSize: '14px', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '6px 10px', flex: 1, minWidth: '160px' }}
                           />
-                          Allow for Online/Web
-                          {method.methodType === 'CASH' && <span style={{ fontSize: '10px', color: '#94A3B8' }}>(Cash counter-only)</span>}
-                        </label>
+                        </div>
 
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
-                          <input 
-                            type="checkbox"
-                            checked={method.allowKiosk}
-                            onChange={(e) => {
-                              const updated = [...paymentMethods];
-                              updated[idx] = { ...method, allowKiosk: e.target.checked };
-                              setPaymentMethods(updated);
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {/* Reordering Buttons */}
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleMovePaymentMethod(idx, 'up')}
+                              disabled={isFirst}
+                              title="Move Up"
+                              style={{
+                                padding: '4px 8px', fontSize: '11px', fontWeight: 700,
+                                background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '6px',
+                                cursor: isFirst ? 'not-allowed' : 'pointer',
+                                opacity: isFirst ? 0.4 : 1,
+                              }}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMovePaymentMethod(idx, 'down')}
+                              disabled={isLast}
+                              title="Move Down"
+                              style={{
+                                padding: '4px 8px', fontSize: '11px', fontWeight: 700,
+                                background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '6px',
+                                cursor: isLast ? 'not-allowed' : 'pointer',
+                                opacity: isLast ? 0.4 : 1,
+                              }}
+                            >
+                              ▼
+                            </button>
+                          </div>
+
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', margin: '0 6px' }}>
+                            <input 
+                              type="checkbox"
+                              checked={method.isActive}
+                              onChange={(e) => {
+                                const updated = [...paymentMethods];
+                                updated[idx] = { ...method, isActive: e.target.checked };
+                                setPaymentMethods(updated);
+                              }}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            {method.isActive ? 'Active' : 'Inactive'}
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePaymentMethod(method.id, method.displayName)}
+                            title="Delete Payment Method"
+                            style={{
+                              background: '#FEE2E2', border: '1px solid #F87171', color: '#991B1B',
+                              padding: '5px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, cursor: 'pointer'
                             }}
-                          />
-                          Allow for Kiosk
-                        </label>
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleSavePaymentMethod(method)}
-                        disabled={saving}
-                        style={{ 
-                          background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '6px 14px', 
-                          borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' 
-                        }}
-                      >
-                        Save Method
-                      </button>
+                      {/* Account Details */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                            Account / Receiver Name
+                          </label>
+                          <input 
+                            type="text"
+                            value={method.accountName || ''}
+                            onChange={(e) => {
+                              const updated = [...paymentMethods];
+                              updated[idx] = { ...method, accountName: e.target.value || null };
+                              setPaymentMethods(updated);
+                            }}
+                            placeholder="e.g. DeskAtlas Manila Inc."
+                            style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                            Account / Mobile Number
+                          </label>
+                          <input 
+                            type="text"
+                            value={method.accountNumber || ''}
+                            onChange={(e) => {
+                              const updated = [...paymentMethods];
+                              updated[idx] = { ...method, accountNumber: e.target.value || null };
+                              setPaymentMethods(updated);
+                            }}
+                            placeholder="e.g. 09171234567 or 1234-5678-9012"
+                            style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px' }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Customer Instructions */}
+                      <div style={{ marginBottom: '14px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                          Customer Instructions
+                        </label>
+                        <textarea 
+                          rows={2}
+                          value={method.instructions || ''}
+                          onChange={(e) => {
+                            const updated = [...paymentMethods];
+                            updated[idx] = { ...method, instructions: e.target.value || null };
+                            setPaymentMethods(updated);
+                          }}
+                          placeholder="Instructions displayed on customer payment screen..."
+                          style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '6px', padding: '8px 10px', fontSize: '12px', fontFamily: 'var(--da-font-family)' }}
+                        />
+                      </div>
+
+                      {/* Receiving QR Code Asset */}
+                      <div style={{ background: '#F8FAFC', border: '1px solid var(--da-border-light)', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px' }}>
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '8px' }}>
+                          Receiving QR Code Asset
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                          {method.qrImagePath ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div
+                                onClick={() => setViewingQrUrl(method.qrImagePath)}
+                                title="Click to enlarge"
+                                style={{
+                                  width: '56px',
+                                  height: '56px',
+                                  borderRadius: '6px',
+                                  border: '1px solid var(--da-border)',
+                                  background: '#fff',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  overflow: 'hidden',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <img
+                                  src={method.qrImagePath}
+                                  alt={`${method.displayName} QR`}
+                                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                                />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
+                                  QR Code Uploaded
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <label style={{
+                                    fontSize: '11px', fontWeight: 600, color: '#0284C7', cursor: isUploadingQr ? 'wait' : 'pointer',
+                                    background: '#E0F2FE', padding: '3px 8px', borderRadius: '4px', border: '1px solid #BAE6FD'
+                                  }}>
+                                    {isUploadingQr ? 'Uploading...' : 'Replace QR'}
+                                    <input
+                                      type="file"
+                                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                                      disabled={isUploadingQr}
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) handleUploadPaymentQr(method.id, f);
+                                      }}
+                                      style={{ display: 'none' }}
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...paymentMethods];
+                                      updated[idx] = { ...method, qrImagePath: null };
+                                      setPaymentMethods(updated);
+                                    }}
+                                    style={{
+                                      fontSize: '11px', fontWeight: 600, color: '#991B1B',
+                                      background: '#FEE2E2', padding: '3px 8px', borderRadius: '4px', border: '1px solid #FECACA',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <label style={{
+                                fontSize: '12px', fontWeight: 700, color: 'var(--da-brand-dark)',
+                                background: '#FFFFFF', border: '1px solid var(--da-border)', borderRadius: '6px',
+                                padding: '6px 12px', cursor: isUploadingQr ? 'wait' : 'pointer',
+                                display: 'inline-flex', alignItems: 'center', gap: '6px'
+                              }}>
+                                <span>📷</span> {isUploadingQr ? 'Uploading...' : 'Upload Receiving QR'}
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                                  disabled={isUploadingQr}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) handleUploadPaymentQr(method.id, f);
+                                  }}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                              <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                                Optional receiving QR for customers to scan (PNG, JPG, WebP up to 5MB)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom bar: Channel toggles and Save button */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--da-border-light)', paddingTop: '12px', flexWrap: 'wrap', gap: '10px' }}>
+                        <div style={{ display: 'flex', gap: '16px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: method.methodType === 'CASH' ? 'not-allowed' : 'pointer' }}>
+                            <input 
+                              type="checkbox"
+                              checked={method.allowWeb}
+                              disabled={method.methodType === 'CASH'}
+                              onChange={(e) => {
+                                const updated = [...paymentMethods];
+                                updated[idx] = { ...method, allowWeb: e.target.checked };
+                                setPaymentMethods(updated);
+                              }}
+                            />
+                            Allow for Online / Web
+                            {method.methodType === 'CASH' && <span style={{ fontSize: '10px', color: '#94A3B8' }}>(Cash counter-only)</span>}
+                          </label>
+
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                            <input 
+                              type="checkbox"
+                              checked={method.allowKiosk}
+                              onChange={(e) => {
+                                const updated = [...paymentMethods];
+                                updated[idx] = { ...method, allowKiosk: e.target.checked };
+                                setPaymentMethods(updated);
+                              }}
+                            />
+                            Allow for Kiosk
+                          </label>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSavePaymentMethod(method)}
+                          disabled={saving}
+                          style={{ 
+                            background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '7px 18px', 
+                            borderRadius: '6px', fontSize: '12px', fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer',
+                            opacity: saving ? 0.7 : 1,
+                          }}
+                        >
+                          {saving ? 'Saving...' : 'Save Method'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
@@ -1384,7 +2129,296 @@ export function Settings() {
           })()}
 
 
-          {/* TAB 5: Kiosk Settings */}
+          {/* TAB 5: Landing Preview Photos */}
+          {activeTab === 'Landing Preview' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+              <div>
+                <div style={{ fontSize: '13px', color: 'var(--da-text-secondary)', lineHeight: '1.5' }}>
+                  Upload and configure up to 3 preview photos displayed in the customer landing page carousel.
+                  Adjust the position/crop within the preview frame and click <strong>Done</strong> before saving.
+                </div>
+              </div>
+
+              {/* 3 Photo Slots */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {[0, 1, 2].map((slotIndex) => {
+                  const photo = landingPreviewPhotos.find((p) => p.displayOrder === slotIndex) || landingPreviewPhotos[slotIndex];
+                  const isAdjusting = adjustingSlot === slotIndex;
+                  const isUploading = uploadingSlot === slotIndex;
+
+                  return (
+                    <div
+                      key={slotIndex}
+                      style={{
+                        border: isAdjusting ? '2px solid var(--da-brand-dark)' : '1px solid var(--da-border)',
+                        borderRadius: '12px',
+                        padding: '18px',
+                        background: isAdjusting ? '#F0FDFA' : '#FAFAFA',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--da-brand-dark)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: '24px', height: '24px', borderRadius: '50%', background: 'var(--da-brand-dark)',
+                            color: '#fff', fontSize: '12px', fontWeight: 800
+                          }}>
+                            {slotIndex + 1}
+                          </span>
+                          <span>Preview Slide {slotIndex + 1}</span>
+                          {photo && (
+                            <span style={{ fontSize: '11px', fontWeight: 600, color: '#0D9488', background: '#CCFBF1', padding: '2px 8px', borderRadius: '4px' }}>
+                              Configured ({photo.position?.x ?? 50}%, {photo.position?.y ?? 50}%)
+                            </span>
+                          )}
+                        </div>
+
+                        {photo && (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {isAdjusting ? (
+                              <button
+                                type="button"
+                                onClick={() => setAdjustingSlot(null)}
+                                style={{
+                                  background: 'var(--da-brand-dark)',
+                                  color: '#fff',
+                                  border: 'none',
+                                  padding: '6px 16px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  boxShadow: 'var(--da-shadow-sm)',
+                                }}
+                              >
+                                ✓ Done
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setAdjustingSlot(slotIndex)}
+                                style={{
+                                  background: '#fff',
+                                  color: '#0F172A',
+                                  border: '1px solid var(--da-border)',
+                                  padding: '6px 12px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Reposition
+                              </button>
+                            )}
+
+                            <label
+                              style={{
+                                background: '#fff',
+                                color: 'var(--da-text-primary)',
+                                border: '1px solid var(--da-border)',
+                                padding: '6px 12px',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'inline-block',
+                              }}
+                            >
+                              Change
+                              <input
+                                type="file"
+                                accept="image/png, image/jpeg, image/jpg, image/webp"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleUploadLandingPhoto(slotIndex, file);
+                                }}
+                                style={{ display: 'none' }}
+                              />
+                            </label>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveLandingPhoto(slotIndex)}
+                              style={{
+                                background: '#FEE2E2',
+                                color: '#991B1B',
+                                border: '1px solid #FECACA',
+                                padding: '6px 12px',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Frame Container matching Customer Landing Preview scale / ratio */}
+                      {photo ? (
+                        <div
+                          onMouseDown={(e) => handlePhotoMouseDown(slotIndex, e)}
+                          onMouseMove={(e) => handlePhotoMouseMove(slotIndex, e)}
+                          onMouseUp={handlePhotoMouseUp}
+                          onMouseLeave={handlePhotoMouseUp}
+                          onTouchStart={(e) => handlePhotoTouchStart(slotIndex, e)}
+                          onTouchMove={(e) => handlePhotoTouchMove(slotIndex, e)}
+                          onTouchEnd={handlePhotoTouchEnd}
+                          onClick={() => {
+                            if (!isAdjusting) setAdjustingSlot(slotIndex);
+                          }}
+                          style={{
+                            width: '100%',
+                            maxWidth: '480px',
+                            height: '240px',
+                            borderRadius: '16px',
+                            overflow: 'hidden',
+                            position: 'relative',
+                            background: '#E2E8F0',
+                            cursor: isAdjusting ? (isDraggingPhoto ? 'grabbing' : 'grab') : 'pointer',
+                            border: isAdjusting ? '2px dashed var(--da-brand-dark)' : '1px solid var(--da-border)',
+                            userSelect: 'none',
+                            touchAction: isAdjusting ? 'none' : 'auto',
+                            boxShadow: 'var(--da-shadow-sm)',
+                          }}
+                        >
+                          <img
+                            src={photo.url}
+                            alt={`Preview slide ${slotIndex + 1}`}
+                            draggable={false}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              objectPosition: `${photo.position?.x ?? 50}% ${photo.position?.y ?? 50}%`,
+                              pointerEvents: 'none',
+                              userSelect: 'none',
+                            }}
+                          />
+
+                          {isAdjusting ? (
+                            <div style={{ position: 'absolute', top: '10px', left: '10px', pointerEvents: 'none' }}>
+                              <span style={{
+                                background: 'rgba(18, 37, 26, 0.9)',
+                                color: '#fff',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                padding: '4px 10px',
+                                borderRadius: '6px',
+                                backdropFilter: 'blur(4px)',
+                              }}>
+                                🖐 Drag photo to adjust crop • Click "Done" when ready
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ position: 'absolute', bottom: '10px', right: '10px', pointerEvents: 'none' }}>
+                              <span style={{
+                                background: 'rgba(18, 37, 26, 0.75)',
+                                color: '#fff',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                backdropFilter: 'blur(4px)',
+                              }}>
+                                Click to reposition
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            width: '100%',
+                            maxWidth: '480px',
+                            height: '180px',
+                            borderRadius: '16px',
+                            border: '2px dashed var(--da-border)',
+                            background: '#FFFFFF',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '20px',
+                            textAlign: 'center',
+                          }}
+                        >
+                          {isUploading ? (
+                            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-text-secondary)' }}>
+                              Uploading image...
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: '24px' }}>🖼️</div>
+                              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>
+                                No preview photo configured for Slot {slotIndex + 1}
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                                PNG, JPG, JPEG, or WebP up to 5MB
+                              </div>
+                              <label
+                                style={{
+                                  background: 'var(--da-brand-dark)',
+                                  color: '#fff',
+                                  border: 'none',
+                                  padding: '8px 16px',
+                                  borderRadius: '8px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'inline-block',
+                                }}
+                              >
+                                + Upload Photo
+                                <input
+                                  type="file"
+                                  accept="image/png, image/jpeg, image/jpg, image/webp"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleUploadLandingPhoto(slotIndex, file);
+                                  }}
+                                  style={{ display: 'none' }}
+                                />
+                              </label>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Save Button */}
+              <div style={{ borderTop: '1px solid var(--da-border-light)', paddingTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveLandingPreview}
+                  disabled={saving}
+                  style={{
+                    background: 'var(--da-brand-dark)',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '12px 24px',
+                    borderRadius: '8px',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                    opacity: saving ? 0.7 : 1,
+                  }}
+                >
+                  {saving ? 'Saving...' : 'Save Landing Preview Configuration'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: Kiosk Settings */}
           {activeTab === 'Kiosk Settings' && (
             <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
               <div>
@@ -1417,6 +2451,285 @@ export function Settings() {
               </button>
             </form>
           )}
+        </div>
+      )}
+
+      {/* MODAL: Add Payment Method */}
+      {isAddPaymentModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: '16px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '16px', maxWidth: '580px', width: '100%',
+            maxHeight: '90vh', overflowY: 'auto', padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 4px' }}>
+                  Add Payment Method
+                </h2>
+                <p style={{ fontSize: '12px', color: 'var(--da-text-secondary)', margin: 0 }}>
+                  Configure provider details and receiving QR asset for DeskAtlas reservations
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddPaymentModalOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#94A3B8' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Provider Preset Buttons */}
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '8px' }}>
+                SELECT PROVIDER PRESET
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px' }}>
+                {PROVIDER_PRESETS.map((preset) => {
+                  const isSelected = addPaymentForm.providerPreset === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handlePresetSelect(preset.id)}
+                      style={{
+                        padding: '10px 8px',
+                        borderRadius: '8px',
+                        border: isSelected ? `2px solid ${preset.badgeColor}` : '1px solid var(--da-border)',
+                        background: isSelected ? preset.badgeBg : '#FAFAFA',
+                        color: isSelected ? preset.badgeColor : '#334155',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {preset.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <form onSubmit={handleCreatePaymentMethod} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                  DISPLAY NAME *
+                </label>
+                <input
+                  type="text"
+                  value={addPaymentForm.displayName}
+                  onChange={(e) => setAddPaymentForm({ ...addPaymentForm, displayName: e.target.value })}
+                  placeholder="e.g. GCash Online or Bank Transfer (MariBank)"
+                  required
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--da-border)', fontSize: '13px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                    RECEIVER / ACCOUNT NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={addPaymentForm.accountName}
+                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, accountName: e.target.value })}
+                    placeholder="e.g. DeskAtlas Manila Inc."
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--da-border)', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                    ACCOUNT / MOBILE NUMBER
+                  </label>
+                  <input
+                    type="text"
+                    value={addPaymentForm.accountNumber}
+                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, accountNumber: e.target.value })}
+                    placeholder="e.g. 09171234567 or 1234-5678-9012"
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--da-border)', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '4px' }}>
+                  CUSTOMER INSTRUCTIONS
+                </label>
+                <textarea
+                  rows={2}
+                  value={addPaymentForm.instructions}
+                  onChange={(e) => setAddPaymentForm({ ...addPaymentForm, instructions: e.target.value })}
+                  placeholder="Instructions displayed on payment session screen..."
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--da-border)', fontSize: '12px', fontFamily: 'var(--da-font-family)', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Receiving QR Upload */}
+              <div style={{ background: '#F8FAFC', border: '1px solid var(--da-border-light)', borderRadius: '8px', padding: '12px 14px' }}>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--da-text-secondary)', marginBottom: '6px' }}>
+                  RECEIVING QR CODE (OPTIONAL)
+                </label>
+                {addPaymentForm.qrImagePath ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <img
+                      src={addPaymentForm.qrImagePath}
+                      alt="QR Preview"
+                      style={{ width: '56px', height: '56px', objectFit: 'contain', borderRadius: '6px', border: '1px solid var(--da-border)', background: '#fff' }}
+                    />
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <label style={{
+                        fontSize: '11px', fontWeight: 600, color: '#0284C7', cursor: 'pointer',
+                        background: '#E0F2FE', padding: '4px 10px', borderRadius: '4px', border: '1px solid #BAE6FD'
+                      }}>
+                        Replace QR
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleUploadPaymentQr('new', f);
+                          }}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setAddPaymentForm({ ...addPaymentForm, qrImagePath: null })}
+                        style={{
+                          fontSize: '11px', fontWeight: 600, color: '#991B1B',
+                          background: '#FEE2E2', padding: '4px 10px', borderRadius: '4px', border: '1px solid #FECACA',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label style={{
+                    fontSize: '12px', fontWeight: 700, color: 'var(--da-brand-dark)',
+                    background: '#FFFFFF', border: '1px solid var(--da-border)', borderRadius: '6px',
+                    padding: '8px 14px', cursor: uploadingQrId === 'new' ? 'wait' : 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '6px'
+                  }}>
+                    <span>📷</span> {uploadingQrId === 'new' ? 'Uploading QR...' : 'Upload Receiving QR Image'}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      disabled={uploadingQrId === 'new'}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleUploadPaymentQr('new', f);
+                      }}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* Channels & Status */}
+              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', borderTop: '1px solid var(--da-border-light)', paddingTop: '10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={addPaymentForm.allowWeb}
+                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, allowWeb: e.target.checked })}
+                  />
+                  Allow for Online / Web
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={addPaymentForm.allowKiosk}
+                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, allowKiosk: e.target.checked })}
+                  />
+                  Allow for Kiosk
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={addPaymentForm.isActive}
+                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, isActive: e.target.checked })}
+                  />
+                  Active
+                </label>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddPaymentModalOpen(false)}
+                  style={{
+                    background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#475569',
+                    padding: '10px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  style={{
+                    background: 'var(--da-brand-dark)', color: '#fff', border: 'none',
+                    padding: '10px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: 700,
+                    cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1
+                  }}
+                >
+                  {saving ? 'Creating...' : 'Create Payment Method'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Enlarge QR Preview */}
+      {viewingQrUrl && (
+        <div 
+          onClick={() => setViewingQrUrl(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1100, padding: '20px'
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: '16px', padding: '20px',
+              maxWidth: '360px', width: '100%', textAlign: 'center',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--da-brand-dark)' }}>
+                Receiving QR Code
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingQrUrl(null)}
+                style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#94A3B8' }}
+              >
+                ✕
+              </button>
+            </div>
+            <img 
+              src={viewingQrUrl} 
+              alt="Full QR Preview"
+              style={{ width: '100%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px' }}
+            />
+          </div>
         </div>
       )}
     </main>

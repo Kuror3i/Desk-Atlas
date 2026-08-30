@@ -113,6 +113,7 @@ export interface PaymentSessionRecord {
   expiresAt: string;
   proofSubmittedAt: string | null;
   paymentMethodId: string | null;
+  businessName?: string;
 }
 
 export interface PaymentSessionView {
@@ -130,6 +131,7 @@ export interface PaymentSessionView {
   proofSubmittedAt: string | null;
   paymentMethodId: string | null;
   paymentMethods: PaymentMethod[];
+  businessName?: string;
 }
 
 export interface CounterPaymentRecord {
@@ -198,7 +200,8 @@ export interface ReviewPaymentRequest {
 }
 
 export interface ConfirmCounterPaymentRequest {
-  paymentAttemptId: string;
+  paymentAttemptId?: string;
+  code?: string;
   actor: PaymentReviewActor;
 }
 
@@ -241,6 +244,7 @@ export interface BookingScanResult {
   accessState: BookingAccessState;
   checkInState: BookingCheckInState;
   customerName: string;
+  customerEmail?: string;
   workspaceInstanceId: string;
   workspaceDisplayName: string;
   workspaceInstanceCode: string;

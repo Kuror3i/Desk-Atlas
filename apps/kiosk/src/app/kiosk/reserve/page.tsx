@@ -121,6 +121,8 @@ export default function KioskReservationFlow() {
             <WorkspaceDeskPicker 
               template={activeTemplate}
               workspaces={(publishedMap?.workspaces || []).filter((w: any) => w.template_id === activeTemplate.id)}
+              floor={publishedMap?.floor}
+              kioskMarker={publishedMap?.elements?.find((e: any) => e.elementType === 'KIOSK_YOU_ARE_HERE' || e.elementRole === 'INFORMATION' || e.style?.markerType === 'KIOSK_YOU_ARE_HERE')}
               onSelect={(ws) => {
                 setActiveDesk(ws);
                 setStep("time");

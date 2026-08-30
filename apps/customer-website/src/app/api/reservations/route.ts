@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
+  buildReservationTrackingUrl,
   createPaymentSessionService,
-  ReservationSupabaseRepository,
   createReservationService,
+  createTransactionalEmailService,
   CreateReservationRequest,
   ReservationError,
+  ReservationSupabaseRepository,
 } from '@deskatlas/domain';
 
 export const runtime = 'nodejs';
@@ -43,31 +45,6 @@ class CustomerWorkspaceRepo {
   }
 }
 
-async function dispatchPaymentLinkEmail(input: {
-  to: string;
-  referenceCode: string;
-  amountDue: number;
-  currency: string;
-  paymentUrl: string;
-  expiresAt: string;
-}) {
-  const webhookUrl = process.env.TRANSACTIONAL_EMAIL_WEBHOOK_URL;
-
-  if (!webhookUrl) {
-    console.info('Payment session email dispatch skipped; no TRANSACTIONAL_EMAIL_WEBHOOK_URL configured.', input);
-    return;
-  }
-
-  await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      template: 'payment-session',
-      ...input,
-    }),
-  });
-}
-
 export async function POST(request: NextRequest) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -92,21 +69,39 @@ export async function POST(request: NextRequest) {
     const paymentLinkBaseUrl =
       process.env.PAYMENT_SESSION_BASE_URL ??
       `${request.nextUrl.origin.replace(/\/$/, '')}/pay`;
+    const trackingBaseUrl =
+      process.env.TRACKING_BASE_URL ??
+      process.env.DESKATLAS_PUBLIC_APP_URL ??
+      request.nextUrl.origin.replace(/\/$/, '');
 
     const reservation = await service.createReservation(body, {
       paymentLinkBaseUrl,
     });
 
+    const trackingUrl = buildReservationTrackingUrl(trackingBaseUrl, reservation.referenceCode);
+    const emailService = createTransactionalEmailService();
+
     if (reservation.paymentSession) {
-      await dispatchPaymentLinkEmail({
+      await emailService.sendPaymentLinkEmail({
         to: reservation.customerEmail,
+        customerFirstName: reservation.customerFirstName,
+        customerLastName: reservation.customerLastName,
         referenceCode: reservation.referenceCode,
         amountDue: reservation.amountDue,
         currency: reservation.currency,
         paymentUrl: reservation.paymentSession.paymentUrl,
         expiresAt: reservation.paymentSession.expiresAt,
+        trackingUrl,
       });
     }
+
+    await emailService.sendReservationTrackingEmail({
+      to: reservation.customerEmail,
+      customerFirstName: reservation.customerFirstName,
+      customerLastName: reservation.customerLastName,
+      referenceCode: reservation.referenceCode,
+      trackingUrl,
+    });
 
     return NextResponse.json(reservation, { status: 201 });
   } catch (error) {

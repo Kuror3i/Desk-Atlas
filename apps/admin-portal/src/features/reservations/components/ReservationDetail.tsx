@@ -64,11 +64,25 @@ export function ReservationDetail({ id }: { id: string }) {
         { label: 'Payment Status', value: '...' },
       ];
 
-  const detailActions = [
-    { label: 'Reschedule', style: { background: 'transparent', color: 'var(--da-text-primary)', border: '1px solid var(--da-border)' } },
-    { label: 'Cancel Booking', style: { background: 'transparent', color: 'var(--da-danger)', border: '1px solid #FECACA' } },
-    { label: 'View QR Code', style: { background: 'var(--da-brand-dark)', color: '#fff', border: 'none' } },
-  ];
+  const isConfirmed = detail?.reservationStatus === 'CONFIRMED' || detail?.reservationStatus === 'CHECKED_IN';
+  const detailActions: Array<{ label: string; style: React.CSSProperties }> = [];
+
+  if (isConfirmed) {
+    detailActions.push({
+      label: 'Reschedule',
+      style: { background: 'transparent', color: 'var(--da-text-primary)', border: '1px solid var(--da-border)' },
+    });
+    detailActions.push({
+      label: 'Cancel Booking',
+      style: { background: 'transparent', color: 'var(--da-danger)', border: '1px solid #FECACA' },
+    });
+    if (detail?.hasBookingQr) {
+      detailActions.push({
+        label: 'View QR Code',
+        style: { background: 'var(--da-brand-dark)', color: '#fff', border: 'none' },
+      });
+    }
+  }
 
   const detailCandidates = detail?.candidates && detail.candidates.length > 0
     ? detail.candidates.map((c) => ({
@@ -122,11 +136,13 @@ export function ReservationDetail({ id }: { id: string }) {
               <span style={{ fontWeight: 700, color: 'var(--da-text-primary)' }}>{f.value}</span>
             </div>
           ))}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '18px', flexWrap: 'wrap' }}>
-            {detailActions.map((act, i) => (
-              <button key={i} style={{ padding: '9px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'var(--da-font-family)', ...act.style }}>{act.label}</button>
-            ))}
-          </div>
+          {detailActions.length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '18px', flexWrap: 'wrap' }}>
+              {detailActions.map((act, i) => (
+                <button key={i} style={{ padding: '9px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'var(--da-font-family)', ...act.style }}>{act.label}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{ flex: 1, minWidth: '260px', background: '#fff', border: '1px solid var(--da-border)', borderRadius: '12px', padding: '20px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--da-text-primary)', margin: '0 0 12px' }}>Candidates</h3>

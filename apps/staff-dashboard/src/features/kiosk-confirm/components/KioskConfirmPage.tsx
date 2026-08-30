@@ -5,10 +5,15 @@ import { useKioskConfirm } from '../hooks/useKioskConfirm';
 
 export function KioskConfirmPage() {
   const [paymentId, setPaymentId] = useState('');
-  const { confirmPayment, loading, error, result, reset } = useKioskConfirm();
+  const { lookupRecord, confirmPayment, loading, error, pendingRecord, result, reset } = useKioskConfirm();
 
-  const handleConfirm = async (e: React.FormEvent) => {
+  const handleLookup = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!paymentId.trim()) return;
+    await lookupRecord(paymentId.trim());
+  };
+
+  const handleConfirm = async () => {
     if (!paymentId.trim()) return;
     await confirmPayment(paymentId.trim());
   };
@@ -36,14 +41,25 @@ export function KioskConfirmPage() {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleConfirm}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--da-text-primary)', marginBottom: '8px' }}>Payment Attempt ID</label>
-            <input 
-              value={paymentId} 
-              onChange={(e) => setPaymentId(e.target.value)} 
-              placeholder="Enter ID from kiosk or customer..." 
-              style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '12px', fontSize: '14px', outline: 'none', marginBottom: '16px' }}
-            />
+          <div>
+            <form onSubmit={handleLookup}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--da-text-primary)', marginBottom: '8px' }}>Kiosk ID / Reference Code</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <input 
+                  value={paymentId} 
+                  onChange={(e) => setPaymentId(e.target.value)} 
+                  placeholder="Enter reference code or ID from kiosk..." 
+                  style={{ flex: 1, border: '1px solid var(--da-border)', borderRadius: '8px', padding: '12px', fontSize: '14px', outline: 'none' }}
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !paymentId.trim()}
+                  style={{ padding: '12px 18px', background: '#F0F4F2', color: 'var(--da-brand-dark)', border: '1px solid var(--da-border)', borderRadius: '8px', fontSize: '14px', fontWeight: 700, cursor: (loading || !paymentId.trim()) ? 'not-allowed' : 'pointer' }}
+                >
+                  Look Up
+                </button>
+              </div>
+            </form>
 
             {error && (
               <div style={{ color: 'var(--da-danger)', fontSize: '13px', marginBottom: '16px', background: '#FEE2E2', padding: '12px', borderRadius: '6px' }}>
@@ -51,14 +67,41 @@ export function KioskConfirmPage() {
               </div>
             )}
 
+            {pendingRecord && (
+              <div style={{ background: '#F9FAF9', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--da-text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>Booking Summary</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--da-text-secondary)' }}>Reference:</span>
+                  <span style={{ fontWeight: 700, color: 'var(--da-brand-dark)' }}>{pendingRecord.reservationReferenceCode}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--da-text-secondary)' }}>Customer:</span>
+                  <span style={{ fontWeight: 600 }}>{pendingRecord.customerFirstName} {pendingRecord.customerLastName}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--da-text-secondary)' }}>Email:</span>
+                  <span>{pendingRecord.customerEmail}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--da-text-secondary)' }}>Amount Due:</span>
+                  <span style={{ fontWeight: 800, color: 'var(--da-brand-dark)' }}>₱{pendingRecord.amountDue}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+                  <span style={{ color: 'var(--da-text-secondary)' }}>Status:</span>
+                  <span style={{ fontWeight: 600 }}>{pendingRecord.reservationStatus}</span>
+                </div>
+              </div>
+            )}
+
             <button 
-              type="submit"
+              type="button"
+              onClick={handleConfirm}
               disabled={loading || !paymentId.trim()}
               style={{ width: '100%', padding: '12px', background: 'var(--da-brand-dark)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 700, cursor: (loading || !paymentId.trim()) ? 'not-allowed' : 'pointer', opacity: (loading || !paymentId.trim()) ? 0.7 : 1 }}
             >
               {loading ? 'Confirming...' : 'Confirm Kiosk Payment'}
             </button>
-          </form>
+          </div>
         )}
       </div>
     </main>

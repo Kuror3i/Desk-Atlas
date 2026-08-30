@@ -216,7 +216,7 @@ Never change these unless explicitly instructed.
 - Alternatives use the same date.
 - Alternatives use the same duration.
 - Alternative start time may differ.
-- Candidates use different physical workspace instances.
+- Candidates may use different physical workspace instances OR the same physical instance with a different start time (duplicate instance + identical start time is rejected).
 
 ### No-Hold Rule
 

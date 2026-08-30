@@ -57,6 +57,12 @@ export class ReservationService {
       templates,
     };
 
+    if (request.source === "KIOSK") {
+      if (!request.candidates || request.candidates.length !== 1 || request.candidates[0].rank !== 0) {
+        throw new ReservationError("Kiosk reservations require exactly one candidate (Main).");
+      }
+    }
+
     // Use CandidateValidationService
     try {
       validateCandidates(request.candidates, context);

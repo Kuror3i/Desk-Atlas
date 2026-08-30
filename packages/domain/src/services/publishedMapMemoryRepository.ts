@@ -1,5 +1,5 @@
 import type { Floor } from '../models/workspace';
-import type { PublishedFloorMap, PublishedMapRepository } from '../models/publishedMap';
+import type { PublishedFloorMap, PublishedMapAudience, PublishedMapRepository } from '../models/publishedMap';
 
 export class InMemoryPublishedMapRepository implements PublishedMapRepository {
   private floors = new Map<string, Floor>();
@@ -21,14 +21,19 @@ export class InMemoryPublishedMapRepository implements PublishedMapRepository {
       .sort((left, right) => left.displayOrder - right.displayOrder || left.name.localeCompare(right.name));
   }
 
-  async loadPublishedFloorMap(floorId: string): Promise<PublishedFloorMap | null> {
+  async loadPublishedFloorMap(
+    floorId: string,
+    _options?: { audience?: PublishedMapAudience }
+  ): Promise<PublishedFloorMap | null> {
     const floor = this.floors.get(floorId);
     if (!floor || !floor.isActive) {
       return null;
     }
 
     const map = this.publishedMaps.get(floorId);
-    return map ? clonePublishedFloorMap(map) : null;
+    if (!map) return null;
+
+    return clonePublishedFloorMap(map);
   }
 }
 

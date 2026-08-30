@@ -11,7 +11,7 @@ import type {
   WorkspaceOperationalStatus,
   WorkspaceTemplate,
 } from '@deskatlas/domain';
-import { inferAdminType } from '@deskatlas/domain';
+import { inferAdminType, sortWorkspaceInstances } from '@deskatlas/domain';
 
 export interface AdminWorkspaceCatalogPayload {
   spaces: AdminWorkspaceSpace[];
@@ -23,7 +23,7 @@ export interface AdminWorkspaceCatalogPayload {
 export async function fetchAdminWorkspaceSpaces(): Promise<AdminWorkspaceSpace[]> {
   const response = await fetch('/api/admin/workspaces', { cache: 'no-store' });
   const body = await parseJson(response);
-  return body.spaces ?? [];
+  return sortWorkspaceInstances(body.spaces ?? []);
 }
 
 export async function fetchAdminWorkspaceCatalog(): Promise<AdminWorkspaceCatalogPayload> {
@@ -31,10 +31,10 @@ export async function fetchAdminWorkspaceCatalog(): Promise<AdminWorkspaceCatalo
   const body = await parseJson(response);
 
   return {
-    spaces: body.spaces ?? [],
+    spaces: sortWorkspaceInstances(body.spaces ?? []),
     templates: body.templates ?? [],
     floors: body.floors ?? [],
-    instances: body.instances ?? [],
+    instances: sortWorkspaceInstances(body.instances ?? []),
   };
 }
 

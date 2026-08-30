@@ -11,6 +11,7 @@ export interface CreateWebPaymentSessionInput {
 
 export interface ReservationPaymentRepository {
   getPaymentExpiryMinutes(): Promise<number>;
+  getBusinessName?(): Promise<string>;
   listActiveWebPaymentMethods(): Promise<PaymentMethod[]>;
   listActiveKioskPaymentMethods(): Promise<PaymentMethod[]>;
   findPaymentSessionByTokenHash(tokenHash: string): Promise<PaymentSessionRecord | null>;

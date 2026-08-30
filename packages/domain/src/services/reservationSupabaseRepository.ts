@@ -325,6 +325,85 @@ export class ReservationSupabaseRepository
     };
   }
 
+  async getCounterPaymentRecordByCode(code: string): Promise<CounterPaymentRecord | null> {
+    const trimmed = code.trim();
+    // Try finding reservation by reference code first
+    const reservationRows = await this.request<any[]>(
+      `/reservations?select=*&reference_code=eq.${encodeURIComponent(trimmed)}&source=eq.KIOSK&limit=1`
+    );
+
+    let reservation = reservationRows?.[0];
+    let attempt: any;
+
+    if (reservation) {
+      const attemptRows = await this.request<any[]>(
+        `/payment_attempts?select=*&reservation_id=eq.${encodeURIComponent(reservation.id)}&channel=eq.KIOSK&order=created_at.desc&limit=1`
+      );
+      attempt = attemptRows?.[0];
+    } else {
+      // Try finding by payment attempt ID directly
+      const attemptRows = await this.request<any[]>(
+        `/payment_attempts?select=*&id=eq.${encodeURIComponent(trimmed)}&channel=eq.KIOSK&limit=1`
+      );
+      attempt = attemptRows?.[0];
+      if (attempt) {
+        const resRows = await this.request<any[]>(
+          `/reservations?select=*&id=eq.${encodeURIComponent(attempt.reservation_id)}&limit=1`
+        );
+        reservation = resRows?.[0];
+      }
+    }
+
+    if (!attempt || !reservation) {
+      return null;
+    }
+
+    const candidatesRows = await this.request<any[]>(
+      `/reservation_candidates?select=*&reservation_id=eq.${encodeURIComponent(reservation.id)}&order=rank.asc`
+    );
+
+    const candidates: ReservationCandidate[] = candidatesRows.map((candidate: any) => ({
+      id: candidate.id,
+      reservationId: candidate.reservation_id,
+      rank: candidate.rank,
+      workspaceInstanceId: candidate.workspace_instance_id,
+      startAt: candidate.start_at,
+      endAt: candidate.end_at,
+      isAssigned: candidate.is_assigned,
+    }));
+
+    return {
+      paymentAttemptId: attempt.id,
+      reservationId: reservation.id,
+      reservationReferenceCode: reservation.reference_code,
+      reservationStatus: reservation.status,
+      paymentStatus: attempt.status,
+      customerEmail: reservation.customer_email,
+      customerFirstName: reservation.customer_first_name,
+      customerLastName: reservation.customer_last_name,
+      amountDue: Number(reservation.amount_due),
+      currency: reservation.currency,
+      paymentMethodId: attempt.payment_method_id,
+      submittedCandidates: candidates,
+      processedAt: attempt.processed_at,
+      processedByUserId: attempt.processed_by_user_id,
+    };
+  }
+
+  async getBusinessName(): Promise<string> {
+    try {
+      const rows = await this.request<any[]>(
+        "/business_settings?select=business_name&id=eq.1&limit=1"
+      );
+      if (rows && rows.length > 0 && rows[0].business_name) {
+        return rows[0].business_name;
+      }
+    } catch {
+      // Return default
+    }
+    return "DeskAtlas";
+  }
+
   async findPaymentSessionByTokenHash(tokenHash: string): Promise<PaymentSessionRecord | null> {
     const attemptRows = await this.request<any[]>(
       `/payment_attempts?select=*&token_hash=eq.${encodeURIComponent(tokenHash)}&channel=eq.WEB&limit=1`
@@ -344,6 +423,7 @@ export class ReservationSupabaseRepository
     }
 
     const reservation = reservationRows[0];
+    const businessName = await this.getBusinessName();
 
     return {
       paymentAttemptId: attempt.id,
@@ -359,6 +439,7 @@ export class ReservationSupabaseRepository
       expiresAt: attempt.expires_at,
       proofSubmittedAt: attempt.proof_submitted_at,
       paymentMethodId: attempt.payment_method_id,
+      businessName,
     };
   }
 
@@ -466,14 +547,29 @@ export class ReservationSupabaseRepository
   }
 
   async confirmCounterPaymentAndAllocate(input: {
-    paymentAttemptId: string;
+    paymentAttemptId?: string;
+    code?: string;
     actorUserId: string;
     processedAt: string;
   }): Promise<PaymentReviewDecisionResult> {
+    let resolvedPaymentAttemptId = input.paymentAttemptId?.trim();
+
+    if (!resolvedPaymentAttemptId && input.code) {
+      const record = await this.getCounterPaymentRecordByCode(input.code);
+      if (!record) {
+        throw new Error("Counter payment attempt was not found.");
+      }
+      resolvedPaymentAttemptId = record.paymentAttemptId;
+    }
+
+    if (!resolvedPaymentAttemptId) {
+      throw new Error("Payment attempt ID or code is required.");
+    }
+
     const result = await this.request<any[]>("/rpc/confirm_kiosk_payment_and_allocate", {
       method: "POST",
       body: JSON.stringify({
-        p_payment_attempt_id: input.paymentAttemptId,
+        p_payment_attempt_id: resolvedPaymentAttemptId,
         p_processed_by_user_id: input.actorUserId,
         p_processed_at: input.processedAt,
       }),
@@ -582,6 +678,7 @@ export class ReservationSupabaseRepository
       reservationStatus: reservation.status,
       customerFirstName: reservation.customer_first_name,
       customerLastName: reservation.customer_last_name,
+      customerEmail: reservation.customer_email,
       bookingTokenHash: reservation.booking_token_hash,
       qrIssuedAt: reservation.qr_issued_at,
       qrRevokedAt: reservation.qr_revoked_at,
@@ -634,7 +731,7 @@ export class ReservationSupabaseRepository
 
   async listOperationalReservations(_nowIso: string): Promise<StaffOperationalReservation[]> {
     const reservations = await this.request<any[]>(
-      "/reservations?select=*&order=created_at.desc&limit=200"
+      "/reservations?select=*&status=in.(CONFIRMED,CHECKED_IN,COMPLETED)&order=created_at.desc&limit=200"
     );
 
     const summaries = await Promise.all(
@@ -644,6 +741,12 @@ export class ReservationSupabaseRepository
     return summaries
       .filter((summary): summary is StaffOperationalReservation => summary !== null)
       .sort(compareOperationalReservations);
+  }
+
+  async getOperationalReservation(
+    idOrReferenceCode: string
+  ): Promise<StaffOperationalReservation | null> {
+    return this.loadOperationalReservation(idOrReferenceCode);
   }
 
   async listOccupancy(nowIso: string): Promise<OccupancyRecord[]> {
@@ -1125,18 +1228,27 @@ export class ReservationSupabaseRepository
   }
 
   private async loadOperationalReservation(
-    reservationId: string,
+    idOrReferenceCode: string,
     reservationRow?: any
   ): Promise<StaffOperationalReservation | null> {
-    const reservation =
-      reservationRow ??
-      (
+    let reservation = reservationRow;
+    if (!reservation) {
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          idOrReferenceCode
+        );
+      const filter = isUuid
+        ? `id=eq.${encodeURIComponent(idOrReferenceCode)}`
+        : `reference_code=eq.${encodeURIComponent(idOrReferenceCode)}`;
+
+      reservation = (
         await this.request<any[]>(
-          `/reservations?select=*&id=eq.${encodeURIComponent(reservationId)}&limit=1`
+          `/reservations?select=*&${filter}&limit=1`
         )
       )?.[0];
+    }
 
-    if (!reservation) {
+    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status)) {
       return null;
     }
 

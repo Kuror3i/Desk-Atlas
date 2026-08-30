@@ -35,6 +35,7 @@ export async function PATCH(request: NextRequest) {
           body.kioskTimeoutMinutes !== undefined && body.kioskTimeoutMinutes !== null
             ? Number(body.kioskTimeoutMinutes)
             : null,
+        landingPreviewPhotos: body.landingPreviewPhotos,
       },
       actorUserId ? { id: actorUserId, name: "Admin", role: "admin" } : null
     );

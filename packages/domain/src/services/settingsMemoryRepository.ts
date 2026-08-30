@@ -1,6 +1,7 @@
 import type {
   AdminPaymentMethod,
   BusinessSettings,
+  CreatePaymentMethodInput,
   UpdateBusinessSettingsInput,
   UpdatePaymentMethodInput,
 } from '../models/settings';
@@ -17,6 +18,7 @@ export class InMemorySettingsRepository implements SettingsRepository {
     bookingIntervalMinutes: 30,
     paymentExpiryMinutes: 60,
     kioskTimeoutMinutes: 5,
+    landingPreviewPhotos: [],
     updatedAt: new Date().toISOString(),
   };
 
@@ -71,7 +73,12 @@ export class InMemorySettingsRepository implements SettingsRepository {
   ];
 
   async getBusinessSettings(): Promise<BusinessSettings> {
-    return { ...this.businessSettings };
+    return {
+      ...this.businessSettings,
+      landingPreviewPhotos: this.businessSettings.landingPreviewPhotos
+        ? [...this.businessSettings.landingPreviewPhotos]
+        : [],
+    };
   }
 
   async updateBusinessSettings(
@@ -87,9 +94,18 @@ export class InMemorySettingsRepository implements SettingsRepository {
       bookingIntervalMinutes: input.bookingIntervalMinutes,
       paymentExpiryMinutes: input.paymentExpiryMinutes,
       kioskTimeoutMinutes: input.kioskTimeoutMinutes ?? null,
+      landingPreviewPhotos:
+        input.landingPreviewPhotos !== undefined
+          ? [...input.landingPreviewPhotos]
+          : this.businessSettings.landingPreviewPhotos,
       updatedAt: new Date().toISOString(),
     };
-    return { ...this.businessSettings };
+    return {
+      ...this.businessSettings,
+      landingPreviewPhotos: this.businessSettings.landingPreviewPhotos
+        ? [...this.businessSettings.landingPreviewPhotos]
+        : [],
+    };
   }
 
   async listOperatingHours(): Promise<OperatingHoursInterval[]> {
@@ -115,7 +131,28 @@ export class InMemorySettingsRepository implements SettingsRepository {
   }
 
   async listPaymentMethods(): Promise<AdminPaymentMethod[]> {
-    return this.paymentMethods.map((p) => ({ ...p }));
+    return this.paymentMethods
+      .map((p) => ({ ...p }))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  async createPaymentMethod(input: CreatePaymentMethodInput): Promise<AdminPaymentMethod> {
+    const maxOrder = this.paymentMethods.reduce((max, p) => Math.max(max, p.displayOrder), 0);
+    const newMethod: AdminPaymentMethod = {
+      id: `pm-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      methodType: input.methodType,
+      displayName: input.displayName,
+      accountName: input.accountName ?? null,
+      accountNumber: input.accountNumber ?? null,
+      qrImagePath: input.qrImagePath ?? null,
+      instructions: input.instructions ?? null,
+      allowWeb: input.allowWeb,
+      allowKiosk: input.allowKiosk,
+      isActive: input.isActive !== undefined ? input.isActive : true,
+      displayOrder: input.displayOrder !== undefined ? input.displayOrder : maxOrder + 1,
+    };
+    this.paymentMethods.push(newMethod);
+    return { ...newMethod };
   }
 
   async updatePaymentMethod(input: UpdatePaymentMethodInput): Promise<AdminPaymentMethod> {
@@ -127,6 +164,7 @@ export class InMemorySettingsRepository implements SettingsRepository {
     const existing = this.paymentMethods[idx];
     const updated: AdminPaymentMethod = {
       ...existing,
+      methodType: input.methodType ?? existing.methodType,
       displayName: input.displayName,
       accountName: input.accountName ?? existing.accountName,
       accountNumber: input.accountNumber ?? existing.accountNumber,
@@ -140,6 +178,26 @@ export class InMemorySettingsRepository implements SettingsRepository {
 
     this.paymentMethods[idx] = updated;
     return { ...updated };
+  }
+
+  async deletePaymentMethod(id: string): Promise<void> {
+    this.paymentMethods = this.paymentMethods.filter((p) => p.id !== id);
+  }
+
+  async reorderPaymentMethods(orderedIds: string[]): Promise<AdminPaymentMethod[]> {
+    orderedIds.forEach((id, index) => {
+      const found = this.paymentMethods.find((p) => p.id === id);
+      if (found) {
+        found.displayOrder = index + 1;
+      }
+    });
+    let nextOrder = orderedIds.length + 1;
+    this.paymentMethods.forEach((p) => {
+      if (!orderedIds.includes(p.id)) {
+        p.displayOrder = nextOrder++;
+      }
+    });
+    return this.listPaymentMethods();
   }
 
   private scheduleBlocks: ScheduleBlock[] = [];

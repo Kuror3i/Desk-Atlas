@@ -35,7 +35,27 @@ export class CounterPaymentService {
       throw new CounterPaymentError("Payment attempt ID is required.");
     }
 
-    const record = await this.counterPaymentRepository.getCounterPaymentRecord(paymentAttemptId);
+    const record = await this.counterPaymentRepository.getCounterPaymentRecord(paymentAttemptId.trim());
+    if (!record) {
+      throw new CounterPaymentError("Counter payment record was not found.");
+    }
+
+    return record;
+  }
+
+  async getCounterPaymentRecordByCode(code: string): Promise<CounterPaymentRecord> {
+    if (!code || code.trim() === "") {
+      throw new CounterPaymentError("Kiosk confirmation code is required.");
+    }
+
+    const trimmed = code.trim();
+    let record: CounterPaymentRecord | null = null;
+    if (this.counterPaymentRepository.getCounterPaymentRecordByCode) {
+      record = await this.counterPaymentRepository.getCounterPaymentRecordByCode(trimmed);
+    } else {
+      record = await this.counterPaymentRepository.getCounterPaymentRecord(trimmed);
+    }
+
     if (!record) {
       throw new CounterPaymentError("Counter payment record was not found.");
     }
@@ -46,8 +66,11 @@ export class CounterPaymentService {
   async confirmPayment(
     request: ConfirmCounterPaymentRequest
   ): Promise<PaymentReviewDecisionResult> {
-    if (!request.paymentAttemptId || request.paymentAttemptId.trim() === "") {
-      throw new CounterPaymentError("Payment attempt ID is required.");
+    const paymentAttemptId = request.paymentAttemptId?.trim();
+    const code = request.code?.trim();
+
+    if (!paymentAttemptId && !code) {
+      throw new CounterPaymentError("Payment attempt ID or code is required.");
     }
 
     if (!request.actor?.userId || request.actor.userId.trim() === "") {
@@ -61,8 +84,9 @@ export class CounterPaymentService {
     }
 
     return this.counterPaymentRepository.confirmCounterPaymentAndAllocate({
-      paymentAttemptId: request.paymentAttemptId,
-      actorUserId: request.actor.userId,
+      paymentAttemptId: paymentAttemptId || undefined,
+      code: code || undefined,
+      actorUserId: request.actor.userId.trim(),
       processedAt: this.nowProvider().toISOString(),
     });
   }

@@ -6,8 +6,11 @@ import type {
   BusinessOperatingHoursMode,
   BusinessSettings,
   CreateBusinessClosureInput,
+  CreatePaymentMethodInput,
+  LandingPreviewPhoto,
   OperatingHoursConfig,
   OperatingHoursDaySchedule,
+  PublicLandingPreviewPhoto,
   SettingsOverview,
   UpdateBusinessSettingsInput,
   UpdateOperatingHoursInput,
@@ -40,6 +43,24 @@ export function createAdminSettingsService(repository: SettingsRepository) {
       };
     },
 
+    async getPublicLandingPreviewPhotos(): Promise<PublicLandingPreviewPhoto[]> {
+      const businessSettings = await repository.getBusinessSettings();
+      const photos = businessSettings.landingPreviewPhotos ?? [];
+      return photos
+        .filter((p) => Boolean(p.url && !p.url.startsWith('data:')))
+        .sort((a, b) => a.displayOrder - b.displayOrder)
+        .slice(0, 3)
+        .map((p) => ({
+          id: p.id,
+          url: p.url,
+          position: {
+            x: Math.max(0, Math.min(100, Number(p.position?.x ?? 50))),
+            y: Math.max(0, Math.min(100, Number(p.position?.y ?? 50))),
+          },
+          displayOrder: p.displayOrder,
+        }));
+    },
+
     async updateBusinessSettings(
       input: UpdateBusinessSettingsInput,
       actor?: DeskAtlasUser | null
@@ -57,12 +78,56 @@ export function createAdminSettingsService(repository: SettingsRepository) {
       return buildOperatingHoursConfig(saved);
     },
 
+    async createPaymentMethod(
+      input: CreatePaymentMethodInput,
+      _actor?: DeskAtlasUser | null
+    ): Promise<AdminPaymentMethod> {
+      const normalized = normalizeCreatePaymentMethodInput(input);
+      return repository.createPaymentMethod(normalized);
+    },
+
     async updatePaymentMethod(
       input: UpdatePaymentMethodInput,
       _actor?: DeskAtlasUser | null
     ): Promise<AdminPaymentMethod> {
       const normalized = normalizePaymentMethodInput(input);
       return repository.updatePaymentMethod(normalized);
+    },
+
+    async deletePaymentMethod(
+      id: string,
+      _actor?: DeskAtlasUser | null
+    ): Promise<void> {
+      if (!id || typeof id !== 'string' || !id.trim()) {
+        throw new SettingsValidationError('Payment method ID is required');
+      }
+      return repository.deletePaymentMethod(id.trim());
+    },
+
+    async reorderPaymentMethods(
+      orderedIds: string[],
+      _actor?: DeskAtlasUser | null
+    ): Promise<AdminPaymentMethod[]> {
+      if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+        throw new SettingsValidationError('Ordered IDs array is required');
+      }
+      if (repository.reorderPaymentMethods) {
+        return repository.reorderPaymentMethods(orderedIds);
+      }
+      // Fallback: update displayOrder sequentially
+      const updated: AdminPaymentMethod[] = [];
+      for (let i = 0; i < orderedIds.length; i++) {
+        const item = await repository.updatePaymentMethod({
+          id: orderedIds[i],
+          displayName: '', // will be ignored or updated
+          allowWeb: false,
+          allowKiosk: false,
+          isActive: true,
+          displayOrder: i + 1,
+        });
+        updated.push(item);
+      }
+      return updated;
     },
 
     async listClosures(): Promise<BusinessClosureException[]> {
@@ -361,6 +426,50 @@ function normalizeBusinessSettingsInput(
     throw new SettingsValidationError('Kiosk timeout must be a positive integer in minutes');
   }
 
+  let normalizedPhotos: LandingPreviewPhoto[] | undefined = undefined;
+  if (input.landingPreviewPhotos !== undefined) {
+    if (!Array.isArray(input.landingPreviewPhotos)) {
+      throw new SettingsValidationError('Landing preview photos must be an array');
+    }
+    if (input.landingPreviewPhotos.length > 3) {
+      throw new SettingsValidationError('Maximum 3 landing preview photos allowed');
+    }
+
+    normalizedPhotos = input.landingPreviewPhotos.map((photo, idx) => {
+      if (!photo || typeof photo !== 'object') {
+        throw new SettingsValidationError(`Invalid preview photo at index ${idx}`);
+      }
+      if (!photo.id || typeof photo.id !== 'string') {
+        throw new SettingsValidationError(`Preview photo ID is required at index ${idx}`);
+      }
+      if (!photo.url || typeof photo.url !== 'string' || !photo.url.trim()) {
+        throw new SettingsValidationError(`Preview photo URL is required at index ${idx}`);
+      }
+      if (photo.url.startsWith('data:')) {
+        throw new SettingsValidationError('Base64 data URLs are not permitted for preview photos; upload image to storage first');
+      }
+
+      const posX = typeof photo.position?.x === 'number' && !isNaN(photo.position.x)
+        ? Math.max(0, Math.min(100, Math.round(photo.position.x)))
+        : 50;
+      const posY = typeof photo.position?.y === 'number' && !isNaN(photo.position.y)
+        ? Math.max(0, Math.min(100, Math.round(photo.position.y)))
+        : 50;
+
+      const displayOrder = typeof photo.displayOrder === 'number' && Number.isInteger(photo.displayOrder)
+        ? Math.max(0, Math.min(2, photo.displayOrder))
+        : idx;
+
+      return {
+        id: photo.id.trim(),
+        url: photo.url.trim(),
+        storagePath: photo.storagePath ? photo.storagePath.trim() : null,
+        position: { x: posX, y: posY },
+        displayOrder,
+      };
+    });
+  }
+
   return {
     businessName: input.businessName.trim(),
     timezone: input.timezone.trim(),
@@ -369,6 +478,7 @@ function normalizeBusinessSettingsInput(
     bookingIntervalMinutes: input.bookingIntervalMinutes,
     paymentExpiryMinutes: input.paymentExpiryMinutes,
     kioskTimeoutMinutes: input.kioskTimeoutMinutes ?? null,
+    landingPreviewPhotos: normalizedPhotos,
   };
 }
 
@@ -465,6 +575,43 @@ function normalizeOperatingHoursInput(
   return result;
 }
 
+function normalizeCreatePaymentMethodInput(input: CreatePaymentMethodInput): CreatePaymentMethodInput {
+  if (!input.displayName || typeof input.displayName !== 'string' || !input.displayName.trim()) {
+    throw new SettingsValidationError('Display name is required');
+  }
+
+  const validTypes: Array<'GCASH' | 'BANK' | 'CASH'> = ['GCASH', 'BANK', 'CASH'];
+  if (!input.methodType || !validTypes.includes(input.methodType)) {
+    throw new SettingsValidationError(`Invalid payment method type: ${input.methodType}. Expected GCASH, BANK, or CASH`);
+  }
+
+  if (input.methodType === 'CASH' && input.allowWeb) {
+    throw new SettingsValidationError('Cash payment method cannot be enabled for online/web reservations');
+  }
+
+  if (input.qrImagePath && input.qrImagePath.startsWith('data:')) {
+    throw new SettingsValidationError('Base64 image blobs are not permitted for QR images; upload QR code to storage first');
+  }
+
+  const displayOrder =
+    input.displayOrder !== undefined && Number.isInteger(input.displayOrder) && input.displayOrder >= 0
+      ? input.displayOrder
+      : undefined;
+
+  return {
+    methodType: input.methodType,
+    displayName: input.displayName.trim(),
+    accountName: input.accountName?.trim() || null,
+    accountNumber: input.accountNumber?.trim() || null,
+    qrImagePath: input.qrImagePath?.trim() || null,
+    instructions: input.instructions?.trim() || null,
+    allowWeb: Boolean(input.allowWeb),
+    allowKiosk: Boolean(input.allowKiosk),
+    isActive: input.isActive !== undefined ? Boolean(input.isActive) : true,
+    displayOrder,
+  };
+}
+
 function normalizePaymentMethodInput(input: UpdatePaymentMethodInput): UpdatePaymentMethodInput {
   if (!input.id || typeof input.id !== 'string' || !input.id.trim()) {
     throw new SettingsValidationError('Payment method ID is required');
@@ -474,8 +621,17 @@ function normalizePaymentMethodInput(input: UpdatePaymentMethodInput): UpdatePay
     throw new SettingsValidationError('Display name is required');
   }
 
+  if (input.methodType === 'CASH' && input.allowWeb) {
+    throw new SettingsValidationError('Cash payment method cannot be enabled for online/web reservations');
+  }
+
+  if (input.qrImagePath && input.qrImagePath.startsWith('data:')) {
+    throw new SettingsValidationError('Base64 image blobs are not permitted for QR images; upload QR code to storage first');
+  }
+
   return {
     id: input.id.trim(),
+    methodType: input.methodType,
     displayName: input.displayName.trim(),
     accountName: input.accountName?.trim() || null,
     accountNumber: input.accountNumber?.trim() || null,

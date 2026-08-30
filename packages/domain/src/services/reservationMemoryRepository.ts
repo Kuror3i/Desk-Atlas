@@ -87,7 +87,18 @@ export class ReservationMemoryRepository
   private operationalAuditEvents: OperationalActivityRecord[] = [];
   private operationQueue = Promise.resolve();
   private nextApprovalFailureMessage: string | null = null;
-  private readonly paymentMethods: PaymentMethod[] = [
+  private businessName: string = "DeskAtlas";
+  constructor(private readonly nowProvider: () => Date = () => new Date()) {}
+
+  setBusinessName(name: string): void {
+    this.businessName = name;
+  }
+
+  async getBusinessName(): Promise<string> {
+    return this.businessName;
+  }
+
+  private paymentMethods: PaymentMethod[] = [
     {
       id: "pm-gcash",
       methodType: "GCASH",
@@ -129,15 +140,20 @@ export class ReservationMemoryRepository
     },
   ];
 
+  setPaymentMethods(methods: PaymentMethod[]): void {
+    this.paymentMethods = [...methods];
+  }
+
   async createReservation(
     request: CreateReservationRequest,
     rateSnapshot: number,
     amountDue: number,
     paymentSession?: CreateWebPaymentSessionInput
   ): Promise<ReservationResponseDTO> {
+    const currentNow = this.nowProvider();
     const reservationId = randomUUID();
-    const referenceCode = `DA-${new Date().getFullYear()}-${randomUUID().split("-")[0].toUpperCase()}`;
-    const now = new Date().toISOString();
+    const referenceCode = `DA-${currentNow.getFullYear()}-${randomUUID().split("-")[0].toUpperCase()}`;
+    const now = currentNow.toISOString();
 
     const candidates: ReservationCandidate[] = request.candidates.map((c) => ({
       id: randomUUID(),
@@ -262,6 +278,7 @@ export class ReservationMemoryRepository
       expiresAt: attempt.expiresAt,
       proofSubmittedAt: attempt.proofSubmittedAt,
       paymentMethodId: attempt.paymentMethodId,
+      businessName: this.businessName,
     };
   }
 
@@ -289,6 +306,53 @@ export class ReservationMemoryRepository
       currency: reservation.currency,
       paymentMethodId: attempt.paymentMethodId,
       submittedCandidates: structuredClone(reservation.candidates ?? []),
+      processedAt: attempt.processedAt,
+      processedByUserId: attempt.processedByUserId,
+    };
+  }
+
+  async getCounterPaymentRecordByCode(code: string): Promise<CounterPaymentRecord | null> {
+    const trimmed = code.trim().toUpperCase();
+    const reservation = this.reservations.find(
+      (entry) =>
+        entry.source === "KIOSK" &&
+        (entry.referenceCode.trim().toUpperCase() === trimmed || entry.id === code.trim())
+    );
+
+    let attempt: StoredPaymentAttempt | undefined;
+    if (reservation) {
+      attempt = Array.from(this.paymentAttempts.values()).find(
+        (entry) => entry.reservationId === reservation.id && entry.channel === "KIOSK"
+      );
+    } else {
+      attempt = Array.from(this.paymentAttempts.values()).find(
+        (entry) => entry.id === code.trim() && entry.channel === "KIOSK"
+      );
+    }
+
+    if (!attempt || attempt.channel !== "KIOSK" || !attempt.paymentMethodId) {
+      return null;
+    }
+
+    const matchedReservation =
+      reservation ?? this.reservations.find((entry) => entry.id === attempt!.reservationId);
+    if (!matchedReservation) {
+      return null;
+    }
+
+    return {
+      paymentAttemptId: attempt.id,
+      reservationId: matchedReservation.id,
+      reservationReferenceCode: matchedReservation.referenceCode,
+      reservationStatus: matchedReservation.status,
+      paymentStatus: attempt.status,
+      customerEmail: matchedReservation.customerEmail,
+      customerFirstName: matchedReservation.customerFirstName,
+      customerLastName: matchedReservation.customerLastName,
+      amountDue: matchedReservation.amountDue,
+      currency: matchedReservation.currency,
+      paymentMethodId: attempt.paymentMethodId,
+      submittedCandidates: structuredClone(matchedReservation.candidates ?? []),
       processedAt: attempt.processedAt,
       processedByUserId: attempt.processedByUserId,
     };
@@ -465,7 +529,8 @@ export class ReservationMemoryRepository
   }
 
   async confirmCounterPaymentAndAllocate(input: {
-    paymentAttemptId: string;
+    paymentAttemptId?: string;
+    code?: string;
     actorUserId: string;
     processedAt: string;
   }): Promise<PaymentReviewDecisionResult> {
@@ -473,9 +538,28 @@ export class ReservationMemoryRepository
       const snapshot = this.snapshotState();
 
       try {
-        const attempt = this.requirePaymentAttemptById(input.paymentAttemptId);
+        let attempt: StoredPaymentAttempt | undefined;
+        if (input.paymentAttemptId) {
+          attempt = this.requirePaymentAttemptById(input.paymentAttemptId);
+        } else if (input.code) {
+          const trimmed = input.code.trim().toUpperCase();
+          const reservation = this.reservations.find(
+            (entry) =>
+              entry.source === "KIOSK" &&
+              (entry.referenceCode.trim().toUpperCase() === trimmed || entry.id === input.code!.trim())
+          );
+          if (reservation) {
+            attempt = Array.from(this.paymentAttempts.values()).find(
+              (entry) => entry.reservationId === reservation.id && entry.channel === "KIOSK"
+            );
+          } else {
+            attempt = Array.from(this.paymentAttempts.values()).find(
+              (entry) => entry.id === input.code!.trim() && entry.channel === "KIOSK"
+            );
+          }
+        }
 
-        if (attempt.channel !== "KIOSK") {
+        if (!attempt || attempt.channel !== "KIOSK") {
           throw new Error("Counter payment attempt was not found.");
         }
 
@@ -488,6 +572,10 @@ export class ReservationMemoryRepository
         }
 
         const reservation = this.requireReservation(attempt.reservationId);
+        if (reservation.status !== "PENDING_COUNTER_CONFIRMATION") {
+          throw new Error("Counter payment attempt is not in a confirmable state.");
+        }
+
         const candidates = [...(reservation.candidates ?? [])].sort((a, b) => a.rank - b.rank);
         let assignedCandidate: ReservationCandidate | null = null;
 
@@ -576,6 +664,7 @@ export class ReservationMemoryRepository
       reservationStatus: reservation.status,
       customerFirstName: reservation.customerFirstName,
       customerLastName: reservation.customerLastName,
+      customerEmail: reservation.customerEmail,
       bookingTokenHash: reservation.bookingTokenHash,
       qrIssuedAt: reservation.qrIssuedAt,
       qrRevokedAt: reservation.qrRevokedAt ?? null,
@@ -605,8 +694,23 @@ export class ReservationMemoryRepository
 
   async listOperationalReservations(_nowIso: string): Promise<StaffOperationalReservation[]> {
     return this.reservations
+      .filter((reservation) => ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status))
       .map((reservation) => this.buildOperationalReservation(reservation))
       .sort(compareOperationalReservations);
+  }
+
+  async getOperationalReservation(
+    idOrReferenceCode: string
+  ): Promise<StaffOperationalReservation | null> {
+    const reservation = this.reservations.find(
+      (r) => r.id === idOrReferenceCode || r.referenceCode === idOrReferenceCode
+    );
+
+    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status)) {
+      return null;
+    }
+
+    return this.buildOperationalReservation(reservation);
   }
 
   async listOccupancy(nowIso: string): Promise<OccupancyRecord[]> {
