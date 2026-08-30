@@ -418,7 +418,7 @@ function getSlotBlockingReason(
   blocks: ScheduleBlock[],
   reservations: BlockingReservationWindow[]
 ) {
-  if (slotStart.getTime() < now.getTime()) {
+  if (slotStart.getTime() + 60_000 <= now.getTime()) {
     return 'PAST_TIME' as const;
   }
 

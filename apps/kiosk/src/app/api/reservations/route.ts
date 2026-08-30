@@ -71,6 +71,47 @@ export async function POST(request: NextRequest) {
       reservationRepository
     );
 
+    const activeKioskMethods = await reservationRepository.listActiveKioskPaymentMethods();
+    if (activeKioskMethods.length === 0) {
+      throw new ReservationError("No active kiosk payment methods available.");
+    }
+
+    let paymentMethodId = body.paymentMethodId;
+    if (paymentMethodId) {
+      const match = activeKioskMethods.find(
+        (m) =>
+          m.id === paymentMethodId ||
+          m.methodType.toUpperCase() === String(paymentMethodId).toUpperCase() ||
+          (paymentMethodId === "pm-cash" && m.methodType === "CASH") ||
+          (paymentMethodId === "pm-gcash" && m.methodType === "GCASH")
+      );
+      if (match) {
+        paymentMethodId = match.id;
+      } else {
+        paymentMethodId = undefined;
+      }
+    }
+
+    if (!paymentMethodId && body.paymentMethod) {
+      const pMethod = String(body.paymentMethod).toUpperCase();
+      const match = activeKioskMethods.find(
+        (m) =>
+          m.id === body.paymentMethod ||
+          m.methodType.toUpperCase() === pMethod ||
+          (pMethod.includes("CASH") && m.methodType === "CASH") ||
+          (pMethod.includes("GCASH") && m.methodType === "GCASH") ||
+          (pMethod.includes("QR") && m.methodType !== "CASH")
+      );
+      if (match) {
+        paymentMethodId = match.id;
+      }
+    }
+
+    if (!paymentMethodId) {
+      const cashMethod = activeKioskMethods.find((m) => m.methodType === "CASH");
+      paymentMethodId = cashMethod ? cashMethod.id : activeKioskMethods[0].id;
+    }
+
     let createRequest: CreateReservationRequest;
 
     if (body.candidates && Array.isArray(body.candidates)) {
@@ -79,11 +120,11 @@ export async function POST(request: NextRequest) {
         customerFirstName: body.customerFirstName ?? body.customer?.firstName,
         customerLastName: body.customerLastName ?? body.customer?.lastName,
         customerEmail: body.customerEmail ?? body.customer?.email,
-        paymentMethodId: body.paymentMethodId ?? (body.paymentMethod === "counter_cash" ? "pm-cash" : "pm-gcash"),
+        paymentMethodId,
         candidates: body.candidates,
       };
     } else {
-      const now = new Date();
+      const now = new Date(Date.now() + 5 * 60 * 1000);
       const durationMin = Number(body.durationMinutes) || (Number(body.durationHours) * 60) || 120;
       let startAt: string;
       if (body.startAt) {
@@ -102,7 +143,7 @@ export async function POST(request: NextRequest) {
         customerFirstName: body.customerFirstName ?? body.customer?.firstName,
         customerLastName: body.customerLastName ?? body.customer?.lastName,
         customerEmail: body.customerEmail ?? body.customer?.email,
-        paymentMethodId: body.paymentMethodId ?? (body.paymentMethod === "counter_cash" ? "pm-cash" : "pm-gcash"),
+        paymentMethodId,
         candidates: [
           {
             rank: 0,

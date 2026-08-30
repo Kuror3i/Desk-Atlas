@@ -95,8 +95,13 @@ function formatTime12Hour(time24: string): string {
   return `${hour}:${minute} ${period}`;
 }
 
-function getTodayManila(): string {
+function getNowWithLeewayDate(): Date {
   const now = new Date();
+  return new Date(now.getTime() + 5 * 60 * 1000);
+}
+
+function getTodayManila(): string {
+  const now = getNowWithLeewayDate();
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Manila",
     year: "numeric",
@@ -110,7 +115,7 @@ function getTodayManila(): string {
 }
 
 function getCurrentTimeManila(): string {
-  const now = new Date();
+  const now = getNowWithLeewayDate();
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Manila",
     hour: "2-digit",
@@ -228,8 +233,18 @@ export default function KioskReservePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Time calculations (Now)
-  const todayDate = useMemo(() => getTodayManila(), []);
-  const nowTime = useMemo(() => getCurrentTimeManila(), []);
+  const [todayDate, setTodayDate] = useState(() => getTodayManila());
+  const [nowTime, setNowTime] = useState(() => getCurrentTimeManila());
+
+  useEffect(() => {
+    const updateTime = () => {
+      setTodayDate(getTodayManila());
+      setNowTime(getCurrentTimeManila());
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 15000);
+    return () => clearInterval(interval);
+  }, [step]);
 
   const endTimeStr = useMemo(() => {
     const [h, m] = nowTime.split(":").map(Number);
@@ -443,11 +458,13 @@ export default function KioskReservePage() {
     setLoadingCategoryInstances(true);
     setCategoryInstanceError(null);
 
+    const currentNow = new Date();
     fetchTemplateAvailability({
       templateId: selectedTemplate.id,
       date: todayDate,
       durationMinutes: durationHours * 60,
       startTime: nowTime,
+      nowIso: currentNow.toISOString(),
     })
       .then((res) => {
         if (cancelled) return;
@@ -1332,7 +1349,11 @@ export default function KioskReservePage() {
                       No desks available right now
                     </h4>
                     <p className="mt-1 text-xs text-[var(--da-text-secondary)]">
-                      All desks in this category are occupied or in maintenance. Please try a shorter duration or pick another category.
+                      {categoryInstances.some((i) => i.blockingReason === "BUSINESS_CLOSED" || i.blockingReason === "OUTSIDE_OPERATING_HOURS")
+                        ? "The space is currently closed outside operating hours. Please visit during open hours."
+                        : categoryInstances.some((i) => i.blockingReason === "PAST_TIME")
+                        ? "Selected time has elapsed. Please change duration or try again."
+                        : "All desks in this category are occupied or in maintenance. Please try a shorter duration or pick another category."}
                     </p>
                     <button
                       type="button"
@@ -1356,6 +1377,34 @@ export default function KioskReservePage() {
                             onClick={() => {
                               if (wsModel) {
                                 setSelectedWorkspace(wsModel);
+                                setStep("details");
+                              } else {
+                                setSelectedWorkspace({
+                                  id: inst.workspaceInstanceId,
+                                  workspaceInstanceId: inst.workspaceInstanceId,
+                                  templateId: inst.templateId,
+                                  floorId: inst.floorId,
+                                  floorName: inst.floorName,
+                                  instanceCode: inst.instanceCode,
+                                  displayName: inst.displayName,
+                                  templateName: inst.templateName,
+                                  description: selectedTemplate.description || "Workspace details",
+                                  rateAmount: inst.rateAmount,
+                                  pricingLabel: `PHP ${inst.rateAmount}/hour`,
+                                  photoPath: inst.photoPath,
+                                  photoPosition: inst.photoPosition,
+                                  capacity: inst.capacity,
+                                  tags: selectedTemplate.tags,
+                                  status: "available",
+                                  statusLabel: "Available",
+                                  statusGlyph: "✓",
+                                  statusTone: "success",
+                                  x: 0,
+                                  y: 0,
+                                  width: 80,
+                                  height: 60,
+                                  shape: "rectangle",
+                                });
                                 setStep("details");
                               }
                             }}

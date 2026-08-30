@@ -15,6 +15,7 @@ interface WorkspaceDeskPickerProps {
 
 function getNowManilaTime(): { date: string; time: string; nowIso: string } {
   const now = new Date();
+  const leewayDate = new Date(now.getTime() + 5 * 60 * 1000);
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Manila",
     year: "numeric",
@@ -23,7 +24,7 @@ function getNowManilaTime(): { date: string; time: string; nowIso: string } {
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(now);
+  }).formatToParts(leewayDate);
   const year = parts.find((p) => p.type === "year")?.value ?? "2026";
   const month = parts.find((p) => p.type === "month")?.value ?? "08";
   const day = parts.find((p) => p.type === "day")?.value ?? "31";
