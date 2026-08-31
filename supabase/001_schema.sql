@@ -1,34 +1,6 @@
 -- ============================================================================
--- DeskAtlas - Final Supabase PostgreSQL Schema
--- Full capstone database foundation
---
--- Basis:
---   - DeskAtlas_Final_ERD_Specification.md
---   - DeskAtlas_Final_Source_of_Truth_Project_Plan.md
---   - prd-deskatlas.md
---
--- Scope of this migration:
---   * extensions
---   * enum types
---   * 14 DeskAtlas application tables
---   * foreign keys
---   * row and cross-table constraints
---   * indexes / partial indexes / GiST exclusion constraint
---   * updated_at triggers
---   * schema-level invariant triggers
---   * RLS enabled in deny-by-default state
---
--- Intentionally NOT included here:
---   * feature RPCs (create reservation, submit proof, approve+allocate, publish)
---   * final RLS policies / Auth wiring (auth is the last implementation milestone)
---   * Storage bucket policies / MIME-size limits (to be finalized with storage work)
---   * policy-document schema (explicitly Won't-Have)
---
--- Important implementation note:
---   reservation_candidates.is_assigned is the inventory-lock flag used by the
---   GiST exclusion constraint. A cancellation transaction MUST clear the assigned
---   candidate in the same transaction. A deferred constraint below enforces this.
---   Completed reservations keep their assigned candidate for historical reporting.
+-- DeskAtlas - 001_schema.sql
+-- Core Database Schema: Extensions, Types, Tables, Constraints, Indexes & Triggers
 -- ============================================================================
 
 BEGIN;
@@ -41,7 +13,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 -- ---------------------------------------------------------------------------
--- 1. Enum types
+-- 1. Enum Types
 -- ---------------------------------------------------------------------------
 
 CREATE TYPE public.workspace_status AS ENUM (
@@ -137,7 +109,7 @@ CREATE TYPE public.pricing_unit AS ENUM (
 );
 
 -- ---------------------------------------------------------------------------
--- 2. Generic helper functions
+-- 2. Schema Helper Functions
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.set_updated_at()
@@ -157,12 +129,11 @@ LANGUAGE sql
 VOLATILE
 SET search_path = public
 AS $$
-  SELECT 'DA-' || to_char(clock_timestamp(), 'YYYY') || '-' ||
-         upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
+  SELECT lpad(floor(random() * 1000000)::text, 6, '0');
 $$;
 
 -- ---------------------------------------------------------------------------
--- 3. Identity
+-- 3. Identity Tables
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.staff_profiles (
@@ -183,8 +154,57 @@ CREATE TABLE public.staff_profiles (
     CHECK (btrim(display_name) <> '')
 );
 
+-- Role Resolution Helper Functions
+CREATE OR REPLACE FUNCTION public.current_actor_role()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+DECLARE
+  v_role text;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN 'ANON';
+  END IF;
+
+  SELECT role INTO v_role
+  FROM public.staff_profiles
+  WHERE user_id = auth.uid() AND is_active = true;
+
+  RETURN COALESCE(v_role, 'ANON');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+BEGIN
+  RETURN (public.current_actor_role() = 'ADMIN');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_staff_or_admin()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+DECLARE
+  v_role text := public.current_actor_role();
+BEGIN
+  RETURN (v_role = 'ADMIN' OR v_role = 'STAFF');
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
--- 4. Configuration
+-- 4. Configuration Tables
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.business_settings (
@@ -196,6 +216,7 @@ CREATE TABLE public.business_settings (
   booking_interval_minutes integer NOT NULL,
   payment_expiry_minutes integer NOT NULL DEFAULT 60,
   kiosk_timeout_minutes integer,
+  landing_preview_photos jsonb NOT NULL DEFAULT '[]'::jsonb,
   updated_by_user_id uuid,
   updated_at timestamptz NOT NULL DEFAULT now(),
 
@@ -240,7 +261,7 @@ CREATE TABLE public.operating_hours (
 );
 
 -- ---------------------------------------------------------------------------
--- 5. Workspace and floor entities
+-- 5. Workspace and Floor Entities
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.workspace_templates (
@@ -338,7 +359,7 @@ CREATE TABLE public.schedule_blocks (
 );
 
 -- ---------------------------------------------------------------------------
--- 6. Map versioning
+-- 6. Map Versioning Tables
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.map_versions (
@@ -429,7 +450,7 @@ CREATE TABLE public.map_elements (
 );
 
 -- ---------------------------------------------------------------------------
--- 7. Reservation
+-- 7. Reservation Tables
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.reservations (
@@ -544,22 +565,21 @@ CREATE TABLE public.reservation_candidates (
   CONSTRAINT reservation_candidates_rank_valid CHECK (rank BETWEEN 0 AND 2),
   CONSTRAINT reservation_candidates_interval_valid CHECK (start_at < end_at),
   CONSTRAINT reservation_candidates_rank_unique UNIQUE (reservation_id, rank),
-  CONSTRAINT reservation_candidates_instance_time_unique UNIQUE (reservation_id, workspace_instance_id, start_at)
+  CONSTRAINT reservation_candidates_instance_time_unique UNIQUE (reservation_id, workspace_instance_id, start_at),
+
+  -- Strong physical double-book protection.
+  -- [start,end) permits back-to-back bookings (e.g. 1-3 then 3-5).
+  CONSTRAINT reservation_candidates_no_assigned_overlap
+    EXCLUDE USING gist (
+      workspace_instance_id WITH =,
+      tstzrange(start_at, end_at, '[)') WITH &&
+    )
+    WHERE (is_assigned = true)
+    DEFERRABLE INITIALLY IMMEDIATE
 );
 
--- Strong physical double-book protection.
--- [start,end) permits back-to-back bookings (e.g. 1-3 then 3-5).
-ALTER TABLE public.reservation_candidates
-  ADD CONSTRAINT reservation_candidates_no_assigned_overlap
-  EXCLUDE USING gist (
-    workspace_instance_id WITH =,
-    tstzrange(start_at, end_at, '[)') WITH &&
-  )
-  WHERE (is_assigned = true)
-  DEFERRABLE INITIALLY IMMEDIATE;
-
 -- ---------------------------------------------------------------------------
--- 8. Payments
+-- 8. Payment Tables
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.payment_methods (
@@ -697,7 +717,7 @@ CREATE TABLE public.payment_attempts (
 );
 
 -- ---------------------------------------------------------------------------
--- 9. Audit
+-- 9. Audit Table
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE public.audit_logs (
@@ -727,10 +747,10 @@ CREATE TABLE public.audit_logs (
 );
 
 -- ---------------------------------------------------------------------------
--- 10. Core indexes and uniqueness rules
+-- 10. Core Indexes and Uniqueness Rules
 -- ---------------------------------------------------------------------------
 
--- Staff / config
+-- Staff
 CREATE INDEX idx_staff_profiles_role_active
   ON public.staff_profiles(role, is_active);
 
@@ -801,6 +821,10 @@ CREATE UNIQUE INDEX uq_map_elements_workspace_once_per_version
   ON public.map_elements(map_version_id, workspace_instance_id)
   WHERE workspace_instance_id IS NOT NULL;
 
+CREATE UNIQUE INDEX uq_map_elements_kiosk_marker
+  ON public.map_elements(map_version_id)
+  WHERE element_type = 'KIOSK_YOU_ARE_HERE';
+
 -- Reservations
 CREATE UNIQUE INDEX uq_reservations_reference_code
   ON public.reservations(reference_code);
@@ -825,7 +849,7 @@ CREATE UNIQUE INDEX uq_reservation_candidates_one_assigned
   ON public.reservation_candidates(reservation_id)
   WHERE is_assigned = true;
 
--- Payment
+-- Payments
 CREATE INDEX idx_payment_methods_active_order
   ON public.payment_methods(is_active, display_order);
 
@@ -871,7 +895,7 @@ CREATE INDEX idx_audit_logs_action_created
   ON public.audit_logs(action, created_at DESC);
 
 -- ---------------------------------------------------------------------------
--- 11. updated_at triggers
+-- 11. updated_at Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE TRIGGER trg_staff_profiles_updated_at
@@ -923,7 +947,7 @@ BEFORE UPDATE ON public.payment_attempts
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
--- 12. Business settings timezone validation
+-- 12. Business Settings Timezone Validation Trigger
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.validate_business_timezone()
@@ -949,7 +973,7 @@ BEFORE INSERT OR UPDATE OF timezone ON public.business_settings
 FOR EACH ROW EXECUTE FUNCTION public.validate_business_timezone();
 
 -- ---------------------------------------------------------------------------
--- 13. Operating-hours overlap protection
+-- 13. Operating-Hours Overlap Protection Trigger
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.prevent_operating_hours_overlap()
@@ -996,7 +1020,7 @@ ON public.operating_hours
 FOR EACH ROW EXECUTE FUNCTION public.prevent_operating_hours_overlap();
 
 -- ---------------------------------------------------------------------------
--- 14. Workspace-instance identity guard
+-- 14. Workspace-Instance Identity Guard Trigger
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.guard_workspace_instance_template()
@@ -1018,7 +1042,7 @@ BEFORE UPDATE OF template_id ON public.workspace_instances
 FOR EACH ROW EXECUTE FUNCTION public.guard_workspace_instance_template();
 
 -- ---------------------------------------------------------------------------
--- 15. Map-version lifecycle and map-element integrity
+-- 15. Map-Version Lifecycle and Map-Element Integrity Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.guard_map_version_lifecycle()
@@ -1120,8 +1144,6 @@ BEGIN
   WHERE id = v_version_id;
 
   IF NOT FOUND THEN
-    -- During an FK cascade from a parent DRAFT delete, the parent row can already
-    -- be unavailable to this lookup. The parent delete guard protects history.
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
     END IF;
@@ -1164,7 +1186,7 @@ BEFORE INSERT OR UPDATE OR DELETE ON public.map_elements
 FOR EACH ROW EXECUTE FUNCTION public.validate_map_element_integrity();
 
 -- ---------------------------------------------------------------------------
--- 16. Reservation candidate-set validation
+-- 16. Reservation Candidate-Set Validation Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.assert_reservation_candidate_set(p_reservation_id uuid)
@@ -1251,7 +1273,7 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION public.validate_reservation_candidate_set_trigger();
 
 -- ---------------------------------------------------------------------------
--- 17. Reservation assignment-state validation
+-- 17. Reservation Assignment-State Validation Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.assert_reservation_assignment_state(p_reservation_id uuid)
@@ -1337,7 +1359,7 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION public.validate_assignment_from_reservation_trigger();
 
 -- ---------------------------------------------------------------------------
--- 18. Reservation / payment immutability and payment consistency
+-- 18. Reservation & Payment Immutability and Consistency Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.guard_reservation_core_fields()
@@ -1450,10 +1472,6 @@ BEGIN
       IF NEW.channel = 'WEB' AND v_allow_web IS DISTINCT FROM true THEN
         RAISE EXCEPTION 'Payment method is not enabled for WEB payments';
       END IF;
-
-      IF NEW.channel = 'KIOSK' AND v_allow_kiosk IS DISTINCT FROM true THEN
-        RAISE EXCEPTION 'Payment method is not enabled for KIOSK payments';
-      END IF;
     END IF;
   END IF;
 
@@ -1510,7 +1528,7 @@ BEFORE DELETE ON public.payment_attempts
 FOR EACH ROW EXECUTE FUNCTION public.prevent_payment_attempt_delete();
 
 -- ---------------------------------------------------------------------------
--- 19. Audit-log immutability and actor validation
+-- 19. Audit-Log Immutability and Actor Validation Triggers
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.validate_audit_actor()
@@ -1560,14 +1578,8 @@ BEFORE UPDATE OR DELETE ON public.audit_logs
 FOR EACH ROW EXECUTE FUNCTION public.prevent_audit_log_mutation();
 
 -- ---------------------------------------------------------------------------
--- 20. Row Level Security - deny by default until feature/auth policies exist
+-- 20. Enable Row Level Security (Deny by default)
 -- ---------------------------------------------------------------------------
---
--- RLS is enabled now so accidental direct browser access cannot expose tables.
--- No permissive policies are created in this foundation migration.
--- service_role / privileged server operations can still be used during controlled
--- implementation. Feature-specific guest RPCs and final Admin/Staff policies are
--- added in their respective milestones, with identity/RLS finalized last.
 
 ALTER TABLE public.staff_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_settings ENABLE ROW LEVEL SECURITY;
@@ -1583,30 +1595,5 @@ ALTER TABLE public.reservation_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_methods ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
-
--- ---------------------------------------------------------------------------
--- 21. Optional initial singleton row
--- ---------------------------------------------------------------------------
--- Deliberately not auto-seeded because the actual business name and booking-slot
--- interval have not been locked in the ERD. Create id=1 during environment setup.
--- Example only:
---
--- INSERT INTO public.business_settings (
---   id, business_name, timezone, booking_interval_minutes,
---   payment_expiry_minutes, kiosk_timeout_minutes
--- ) VALUES (
---   1, 'DeskAtlas', 'Asia/Manila', 30, 60, 10
--- );
-
--- ---------------------------------------------------------------------------
--- 22. Storage note
--- ---------------------------------------------------------------------------
--- Storage buckets are intentionally not created in this DDL because accepted MIME
--- types, file-size limits, and access policy details are not yet locked.
--- The final design requires at least these logical storage areas:
---   * workspace template photos
---   * payment-method QR images
---   * PRIVATE payment proofs
--- No policy-document bucket should be created.
 
 COMMIT;

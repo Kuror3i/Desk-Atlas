@@ -21,7 +21,7 @@ import {
   type WorkspaceMapViewModel,
   getWorkspacePhotoObjectPosition,
 } from "../../features/reservation/SpotDetailModal";
-import { fetchTemplateAvailability } from "../../lib/availabilityApi";
+import { fetchTemplateAvailability, fetchOccupiedInstances } from "../../lib/availabilityApi";
 
 export interface WorkspaceTemplateSummary {
   id: string;
@@ -39,13 +39,30 @@ export interface WorkspaceTemplateSummary {
 }
 
 function mapPublishedFloorToWorkspaceCards(
-  published: PublishedFloorMap
+  published: PublishedFloorMap,
+  occupiedInstanceIds: Set<string> = new Set()
 ): WorkspaceMapViewModel[] {
   return published.elements
     .filter((element) => element.elementRole === "WORKSPACE" && element.workspace)
     .map((element) => {
       const workspace = element.workspace!;
-      const isAvailable = workspace.isBookable && workspace.operationalStatus === "ACTIVE";
+      const isOccupied = occupiedInstanceIds.has(workspace.workspaceInstanceId);
+      const isMaintenance = workspace.operationalStatus === "MAINTENANCE";
+      const isAvailable = workspace.isBookable && workspace.operationalStatus === "ACTIVE" && !isOccupied;
+      const status = isOccupied
+        ? "occupied"
+        : isMaintenance
+        ? "maintenance"
+        : isAvailable
+        ? "available"
+        : "unavailable";
+      const statusLabel = isOccupied
+        ? "Occupied"
+        : isMaintenance
+        ? "Maintenance"
+        : isAvailable
+        ? "Available"
+        : "Unavailable";
       return {
         id: element.id,
         workspaceInstanceId: workspace.workspaceInstanceId,
@@ -62,8 +79,8 @@ function mapPublishedFloorToWorkspaceCards(
         photoPosition: workspace.photoPosition,
         capacity: workspace.capacity,
         tags: workspace.tags,
-        status: isAvailable ? "available" : "unavailable",
-        statusLabel: isAvailable ? "Available" : "Unavailable",
+        status,
+        statusLabel,
         statusGlyph: isAvailable ? "✓" : "×",
         statusTone: isAvailable ? "success" : "muted",
         x: element.x,
@@ -274,6 +291,7 @@ export default function KioskReservePage() {
   const [mapLoading, setMapLoading] = useState(true);
   const [mapError, setMapError] = useState<string | null>(null);
   const [allFloorWorkspaces, setAllFloorWorkspaces] = useState<WorkspaceMapViewModel[]>([]);
+  const [occupiedInstanceIds, setOccupiedInstanceIds] = useState<Set<string>>(new Set());
 
   // Real-time instances for category flow
   const [categoryInstances, setCategoryInstances] = useState<AvailableInstanceSummary[]>([]);
@@ -285,11 +303,29 @@ export default function KioskReservePage() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
+  const fetchOccupiedData = async () => {
+    try {
+      const res = await fetchOccupiedInstances();
+      if (res?.occupiedInstanceIds) {
+        setOccupiedInstanceIds(new Set(res.occupiedInstanceIds));
+      }
+    } catch {
+      // Keep existing occupied list on fetch error
+    }
+  };
+
+  useEffect(() => {
+    fetchOccupiedData();
+    const interval = setInterval(fetchOccupiedData, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Fetch published map
   const fetchMapData = async (targetFloorId?: string) => {
     try {
       setMapLoading(true);
       setMapError(null);
+      fetchOccupiedData();
       const url = targetFloorId
         ? `/api/published-map?floorId=${encodeURIComponent(targetFloorId)}`
         : "/api/published-map";
@@ -314,7 +350,7 @@ export default function KioskReservePage() {
               });
               if (!r.ok) return [];
               const resData = await r.json();
-              return resData.published ? mapPublishedFloorToWorkspaceCards(resData.published) : [];
+              return resData.published ? mapPublishedFloorToWorkspaceCards(resData.published, occupiedInstanceIds) : [];
             } catch {
               return [];
             }
@@ -322,7 +358,7 @@ export default function KioskReservePage() {
         );
         setAllFloorWorkspaces(results.flat());
       } else if (data.published) {
-        setAllFloorWorkspaces(mapPublishedFloorToWorkspaceCards(data.published));
+        setAllFloorWorkspaces(mapPublishedFloorToWorkspaceCards(data.published, occupiedInstanceIds));
       }
     } catch (err: any) {
       setMapError(err.message || "Failed to load floor map.");
@@ -344,13 +380,13 @@ export default function KioskReservePage() {
   }, [published]);
 
   const workspaces = useMemo(
-    () => (published ? mapPublishedFloorToWorkspaceCards(published) : []),
-    [published]
+    () => (published ? mapPublishedFloorToWorkspaceCards(published, occupiedInstanceIds) : []),
+    [published, occupiedInstanceIds]
   );
 
   const elements = published?.elements || [];
 
-  // Auto-fit view
+  // Parity with kiosk viewports: default to 100% zoom (1.0) or restore saved zoom
   useEffect(() => {
     if (!published?.version?.id) return;
     const saved = getSavedMapZoom(published.version.id);
@@ -358,25 +394,8 @@ export default function KioskReservePage() {
       setZoom(saved);
       return;
     }
-
-    const fit = () => {
-      if (!mapContainerRef.current) return;
-      const rect = mapContainerRef.current.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const computed = computeFitViewZoom(
-        rect.width,
-        rect.height,
-        canvasDimensions.width,
-        canvasDimensions.height
-      );
-      setZoom(computed);
-    };
-
-    fit();
-    const handleResize = () => fit();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [published?.version?.id, canvasDimensions.width, canvasDimensions.height]);
+    setZoom(1);
+  }, [published?.version?.id]);
 
   const handleZoomIn = () => {
     setZoom((z) => {
@@ -395,16 +414,8 @@ export default function KioskReservePage() {
   };
 
   const handleFitView = () => {
-    if (!mapContainerRef.current) return;
-    const rect = mapContainerRef.current.getBoundingClientRect();
-    const next = computeFitViewZoom(
-      rect.width,
-      rect.height,
-      canvasDimensions.width,
-      canvasDimensions.height
-    );
-    setZoom(next);
-    if (published?.version?.id) saveMapZoom(published.version.id, next);
+    setZoom(1);
+    if (published?.version?.id) saveMapZoom(published.version.id, 1);
   };
 
   const handleFloorChange = (newFloorId: string) => {
@@ -583,9 +594,9 @@ export default function KioskReservePage() {
   const totalAmount = currentRate * durationHours;
 
   return (
-    <SessionManager onReset={handleReset} onTimeoutWarning={() => {}}>
+    <SessionManager onReset={handleReset} onTimeoutWarning={() => { }}>
       <main className="min-h-screen bg-[var(--da-canvas)] px-3 sm:px-6 md:px-8 py-5 sm:py-6 text-[var(--da-text-primary)] w-full">
-        <div className="mx-auto flex max-w-[1600px] w-full flex-col gap-6">
+        <div className="mx-auto flex max-w-[1800px] w-full flex-col gap-6">
           {/* Header Bar & Breadcrumbs */}
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--da-border-light)] pb-4">
             <div>
@@ -595,13 +606,12 @@ export default function KioskReservePage() {
                   onClick={() => {
                     if (step !== "code") setStep("discovery");
                   }}
-                  className={`hover:underline ${
-                    step === "discovery"
+                  className={`hover:underline ${step === "discovery"
                       ? "text-[var(--da-primary)]"
                       : selectedWorkspace || selectedTemplate
-                      ? "text-emerald-700"
-                      : "text-[var(--da-text-secondary)]"
-                  }`}
+                        ? "text-emerald-700"
+                        : "text-[var(--da-text-secondary)]"
+                    }`}
                 >
                   1. Select Spot {selectedWorkspace ? `(✓ ${selectedWorkspace.displayName})` : selectedTemplate ? `(✓ ${selectedTemplate.name})` : ""}
                 </button>
@@ -613,26 +623,24 @@ export default function KioskReservePage() {
                   onClick={() => {
                     if ((selectedWorkspace || selectedTemplate) && step !== "code") setStep("duration");
                   }}
-                  className={`hover:underline ${
-                    step === "duration"
+                  className={`hover:underline ${step === "duration"
                       ? "text-[var(--da-primary)]"
                       : step === "details"
-                      ? "text-emerald-700"
-                      : "text-[var(--da-text-secondary)]"
-                  }`}
+                        ? "text-emerald-700"
+                        : "text-[var(--da-text-secondary)]"
+                    }`}
                 >
                   2. Duration (Now) {durationHours ? `(✓ ${durationHours}h)` : ""}
                 </button>
                 <span className="text-[var(--da-text-secondary)]">/</span>
 
                 <span
-                  className={`${
-                    step === "details"
+                  className={`${step === "details"
                       ? "text-[var(--da-primary)]"
                       : step === "code"
-                      ? "text-emerald-700"
-                      : "text-[var(--da-text-secondary)]"
-                  }`}
+                        ? "text-emerald-700"
+                        : "text-[var(--da-text-secondary)]"
+                    }`}
                 >
                   3. Your Details
                 </span>
@@ -651,12 +659,12 @@ export default function KioskReservePage() {
                     ? "Choose Your Workspace on the Map"
                     : "Browse by Workspace Category"
                   : step === "duration"
-                  ? "Select Duration (Starting Now)"
-                  : step === "category-instances"
-                  ? "Select Your Preferred Desk"
-                  : step === "details"
-                  ? "Guest Details & Confirmation"
-                  : "Pending Counter Confirmation"}
+                    ? "Select Duration (Starting Now)"
+                    : step === "category-instances"
+                      ? "Select Your Preferred Desk"
+                      : step === "details"
+                        ? "Guest Details & Confirmation"
+                        : "Pending Counter Confirmation"}
               </h1>
 
               <p className="mt-1 text-sm text-[var(--da-text-secondary)]">
@@ -665,12 +673,12 @@ export default function KioskReservePage() {
                     ? "Explore our interactive floor layout and click on any available spot to reserve for now."
                     : "Select a workspace category to book your immediate walk-in stay."
                   : step === "duration"
-                  ? `Choose how many hours you need starting right now at ${formatTime12Hour(nowTime)}.`
-                  : step === "category-instances"
-                  ? `Choose an available ${selectedTemplate?.name || "workspace"} for immediate use.`
-                  : step === "details"
-                  ? "Enter your name and email to receive your booking QR access pass."
-                  : "Present your check-in code at the counter to confirm payment and receive your pass."}
+                    ? `Choose how many hours you need starting right now at ${formatTime12Hour(nowTime)}.`
+                    : step === "category-instances"
+                      ? `Choose an available ${selectedTemplate?.name || "workspace"} for immediate use.`
+                      : step === "details"
+                        ? "Enter your name and email to receive your booking QR access pass."
+                        : "Present your check-in code at the counter to confirm payment and receive your pass."}
               </p>
             </div>
 
@@ -703,11 +711,10 @@ export default function KioskReservePage() {
                   <button
                     type="button"
                     onClick={() => setDiscoveryMode("map")}
-                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all ${
-                      discoveryMode === "map"
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all ${discoveryMode === "map"
                         ? "bg-[var(--da-primary)] text-white shadow-sm"
                         : "text-[var(--da-text-secondary)] hover:text-[var(--da-brand-dark)]"
-                    }`}
+                      }`}
                   >
                     <span>🗺️</span>
                     <span>Interactive Floor Map</span>
@@ -716,11 +723,10 @@ export default function KioskReservePage() {
                   <button
                     type="button"
                     onClick={() => setDiscoveryMode("category")}
-                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all ${
-                      discoveryMode === "category"
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-extrabold transition-all ${discoveryMode === "category"
                         ? "bg-[var(--da-primary)] text-white shadow-sm"
                         : "text-[var(--da-text-secondary)] hover:text-[var(--da-brand-dark)]"
-                    }`}
+                      }`}
                   >
                     <span>🏢</span>
                     <span>Browse by Category</span>
@@ -757,6 +763,9 @@ export default function KioskReservePage() {
                       <div className="hidden sm:flex items-center gap-3 text-xs font-semibold text-[var(--da-text-secondary)] border-r border-[var(--da-border-light)] pr-3">
                         <span className="inline-flex items-center gap-1">
                           <span className="h-3 w-3 rounded bg-[#E0EFE4] border border-[#22c55e]" /> Available
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="h-3 w-3 rounded bg-[#E2E8F0] border border-[#94a3b8]" /> Occupied
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <span className="h-3 w-3 rounded bg-[#FCF060] border border-[#f59e0b]" /> Maintenance
@@ -937,10 +946,10 @@ export default function KioskReservePage() {
                               (isWorkspace
                                 ? "#E0EFE4"
                                 : isAmenity
-                                ? defaultAmenityColor
-                                : isWall
-                                ? "#334155"
-                                : "#F3F7F4");
+                                  ? defaultAmenityColor
+                                  : isWall
+                                    ? "#334155"
+                                    : "#F3F7F4");
 
                             let bg = String(itemColor);
                             let textColor = getContrastColor(bg);
@@ -950,7 +959,8 @@ export default function KioskReservePage() {
                                 el.workspace?.workspaceInstanceId === selectedWorkspace?.workspaceInstanceId;
                               const status = el.workspace?.operationalStatus || "ACTIVE";
                               const isBookable = el.workspace?.isBookable ?? true;
-                              const isAvailable = isBookable && status === "ACTIVE";
+                              const isOccupied = occupiedInstanceIds.has(el.workspace?.workspaceInstanceId || "");
+                              const isAvailable = isBookable && status === "ACTIVE" && !isOccupied;
 
                               let borderColor = isSelected ? "var(--da-accent)" : "#DCE6DF";
                               let borderWidth = isSelected ? "3px" : "1.5px";
@@ -961,6 +971,11 @@ export default function KioskReservePage() {
                                 borderColor = "#f59e0b";
                                 bg = "#FCF060";
                                 textColor = "#92400e";
+                              } else if (isOccupied) {
+                                borderStyle = "solid";
+                                borderColor = "#94a3b8";
+                                bg = "#E2E8F0";
+                                textColor = "#64748b";
                               } else if (!isAvailable) {
                                 borderStyle = "dashed";
                                 borderColor = "#94a3b8";
@@ -990,7 +1005,9 @@ export default function KioskReservePage() {
                                     onClick={() => {
                                       if (wsModel) handleSpotClick(wsModel);
                                     }}
-                                    className="group h-full w-full flex flex-col items-center justify-center p-1 text-center transition-all duration-150 relative hover:scale-[1.03]"
+                                    className={`group h-full w-full flex flex-col items-center justify-center p-1 text-center transition-all duration-150 relative ${
+                                      isAvailable ? "hover:scale-[1.03]" : ""
+                                    }`}
                                     style={{
                                       backgroundColor: bg,
                                       borderWidth,
@@ -999,7 +1016,7 @@ export default function KioskReservePage() {
                                       borderRadius: el.elementType === "meeting-room" ? "16px" : "10px",
                                       color: textColor,
                                       cursor: isAvailable ? "pointer" : "not-allowed",
-                                      opacity: isAvailable ? 1 : 0.75,
+                                      opacity: isAvailable ? 1 : 0.6,
                                       boxShadow: isSelected
                                         ? "0 0 0 4px rgba(200, 244, 81, 0.4), 0 4px 12px rgba(12, 59, 39, 0.15)"
                                         : "0 1px 3px rgba(0, 0, 0, 0.05)",
@@ -1008,6 +1025,11 @@ export default function KioskReservePage() {
                                     <span className="max-w-full truncate text-[11px] font-bold leading-tight">
                                       {displayName}
                                     </span>
+                                    {isOccupied && (
+                                      <span className="text-[9px] font-extrabold uppercase tracking-tight text-slate-500 mt-0.5">
+                                        Occupied
+                                      </span>
+                                    )}
                                   </button>
                                 </div>
                               );
@@ -1248,11 +1270,10 @@ export default function KioskReservePage() {
                         key={hours}
                         type="button"
                         onClick={() => setDurationHours(hours)}
-                        className={`flex flex-col items-center justify-center py-5 px-3 rounded-2xl border-2 transition-all ${
-                          isSelected
+                        className={`flex flex-col items-center justify-center py-5 px-3 rounded-2xl border-2 transition-all ${isSelected
                             ? "bg-[var(--da-primary)] text-white border-[var(--da-accent)] shadow-md ring-2 ring-[var(--da-accent)]"
                             : "bg-[var(--da-canvas)] text-[var(--da-brand-dark)] border-[var(--da-border-light)] hover:border-[var(--da-primary)] hover:bg-white"
-                        }`}
+                          }`}
                       >
                         <span className="text-2xl font-extrabold">{hours}</span>
                         <span className="text-xs font-semibold opacity-90">
@@ -1352,8 +1373,8 @@ export default function KioskReservePage() {
                       {categoryInstances.some((i) => i.blockingReason === "BUSINESS_CLOSED" || i.blockingReason === "OUTSIDE_OPERATING_HOURS")
                         ? "The space is currently closed outside operating hours. Please visit during open hours."
                         : categoryInstances.some((i) => i.blockingReason === "PAST_TIME")
-                        ? "Selected time has elapsed. Please change duration or try again."
-                        : "All desks in this category are occupied or in maintenance. Please try a shorter duration or pick another category."}
+                          ? "Selected time has elapsed. Please change duration or try again."
+                          : "All desks in this category are occupied or in maintenance. Please try a shorter duration or pick another category."}
                     </p>
                     <button
                       type="button"
@@ -1365,16 +1386,17 @@ export default function KioskReservePage() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {categoryInstances
-                      .filter((i) => i.isAvailable)
-                      .map((inst) => {
-                        const wsModel = allFloorWorkspaces.find(
-                          (w) => w.workspaceInstanceId === inst.workspaceInstanceId
-                        );
-                        return (
-                          <div
-                            key={inst.workspaceInstanceId}
-                            onClick={() => {
+                    {categoryInstances.map((inst) => {
+                      const isAvailable = inst.isAvailable;
+                      const isOccupied = !isAvailable && (inst.blockingReason === "RESERVATION_CONFLICT" || occupiedInstanceIds.has(inst.workspaceInstanceId));
+                      const wsModel = allFloorWorkspaces.find(
+                        (w) => w.workspaceInstanceId === inst.workspaceInstanceId
+                      );
+                      return (
+                        <div
+                          key={inst.workspaceInstanceId}
+                          onClick={() => {
+                            if (isAvailable) {
                               if (wsModel) {
                                 setSelectedWorkspace(wsModel);
                                 setStep("details");
@@ -1407,48 +1429,64 @@ export default function KioskReservePage() {
                                 });
                                 setStep("details");
                               }
-                            }}
-                            className="rounded-2xl border-2 border-[var(--da-border-light)] hover:border-[var(--da-primary)] bg-white p-5 flex flex-col justify-between hover:shadow-md transition cursor-pointer"
-                          >
-                            <div>
-                              <div className="flex items-center justify-between gap-2">
-                                <h4 className="text-base font-extrabold text-[var(--da-brand-dark)]">
-                                  {inst.displayName}
-                                </h4>
-                                <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 text-[10px] font-extrabold">
-                                  Available Now
-                                </span>
-                              </div>
-                              <p className="text-xs text-[var(--da-text-secondary)] mt-1">
-                                📍 {inst.floorName} • Capacity: {inst.capacity} seat(s)
-                              </p>
-                            </div>
-
-                            <div className="mt-4 pt-3 border-t border-[var(--da-border-light)] flex items-center justify-between">
-                              <span className="text-xs font-extrabold text-[var(--da-brand-dark)]">
-                                ₱{totalAmount.toFixed(2)}{" "}
-                                <span className="text-[10px] font-normal text-[var(--da-text-secondary)]">
-                                  ({durationHours}h)
-                                </span>
-                              </span>
-
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (wsModel) {
-                                    setSelectedWorkspace(wsModel);
-                                    setStep("details");
-                                  }
-                                }}
-                                className="da-primary-button text-xs font-bold py-1.5 px-3.5"
+                            }
+                          }}
+                          className={`rounded-2xl border-2 p-5 flex flex-col justify-between transition ${
+                            isAvailable
+                              ? "border-[var(--da-border-light)] hover:border-[var(--da-primary)] bg-white hover:shadow-md cursor-pointer"
+                              : "border-slate-200 bg-slate-100/80 opacity-60 cursor-not-allowed"
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className={`text-base font-extrabold ${isAvailable ? "text-[var(--da-brand-dark)]" : "text-slate-500"}`}>
+                                {inst.displayName}
+                              </h4>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold border ${
+                                  isAvailable
+                                    ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                    : isOccupied
+                                    ? "bg-slate-200 text-slate-700 border-slate-300"
+                                    : "bg-amber-100 text-amber-800 border-amber-200"
+                                }`}
                               >
-                                Select Desk →
-                              </button>
+                                {isAvailable ? "Available Now" : isOccupied ? "Occupied" : "Unavailable"}
+                              </span>
                             </div>
+                            <p className="text-xs text-[var(--da-text-secondary)] mt-1">
+                              📍 {inst.floorName} • Capacity: {inst.capacity} seat(s)
+                            </p>
                           </div>
-                        );
-                      })}
+
+                          <div className="mt-4 pt-3 border-t border-[var(--da-border-light)] flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-[var(--da-brand-dark)]">
+                              ₱{totalAmount.toFixed(2)}{" "}
+                              <span className="text-[10px] font-normal text-[var(--da-text-secondary)]">
+                                ({durationHours}h)
+                              </span>
+                            </span>
+
+                            <button
+                              type="button"
+                              disabled={!isAvailable}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isAvailable && wsModel) {
+                                  setSelectedWorkspace(wsModel);
+                                  setStep("details");
+                                }
+                              }}
+                              className={`da-primary-button text-xs font-bold py-1.5 px-3.5 ${
+                                !isAvailable ? "opacity-50 cursor-not-allowed" : ""
+                              }`}
+                            >
+                              {isAvailable ? "Select Desk →" : isOccupied ? "Occupied" : "Unavailable"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1520,9 +1558,8 @@ export default function KioskReservePage() {
                         }}
                         placeholder="e.g. Maria"
                         disabled={isSubmitting}
-                        className={`da-input text-sm font-medium ${
-                          formErrors.firstName ? "border-red-500 ring-red-200" : ""
-                        }`}
+                        className={`da-input text-sm font-medium ${formErrors.firstName ? "border-red-500 ring-red-200" : ""
+                          }`}
                       />
                       {formErrors.firstName && (
                         <p className="mt-1 text-[11px] font-bold text-red-600">{formErrors.firstName}</p>
@@ -1543,9 +1580,8 @@ export default function KioskReservePage() {
                         }}
                         placeholder="e.g. Santos"
                         disabled={isSubmitting}
-                        className={`da-input text-sm font-medium ${
-                          formErrors.lastName ? "border-red-500 ring-red-200" : ""
-                        }`}
+                        className={`da-input text-sm font-medium ${formErrors.lastName ? "border-red-500 ring-red-200" : ""
+                          }`}
                       />
                       {formErrors.lastName && (
                         <p className="mt-1 text-[11px] font-bold text-red-600">{formErrors.lastName}</p>
@@ -1567,9 +1603,8 @@ export default function KioskReservePage() {
                       }}
                       placeholder="e.g. maria.santos@example.com"
                       disabled={isSubmitting}
-                      className={`da-input text-sm font-medium ${
-                        formErrors.email ? "border-red-500 ring-red-200" : ""
-                      }`}
+                      className={`da-input text-sm font-medium ${formErrors.email ? "border-red-500 ring-red-200" : ""
+                        }`}
                     />
                     {formErrors.email ? (
                       <p className="mt-1 text-[11px] font-bold text-red-600">{formErrors.email}</p>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Check, ChevronRight } from "lucide-react";
+import { zonedDateTimeToUtc } from "@deskatlas/domain";
 
 interface Workspace {
   id: string;
@@ -170,12 +171,18 @@ export function ReservationFlowPage() {
     setSubmitError("");
 
     try {
+      const [startH, startM] = formData.time.split(":").map(Number);
+      const endMinutes = startH * 60 + startM + Number(formData.duration) * 60;
+      const endH = Math.floor(endMinutes / 60);
+      const endM = endMinutes % 60;
+      const endTime = `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+
       const candidates = [
         {
           rank: 0,
           workspaceInstanceId: selectedPrimaryWorkspace.id,
-          startAt: `${formData.date}T${formData.time}:00`,
-          endAt: new Date(new Date(`${formData.date}T${formData.time}:00`).getTime() + Number(formData.duration) * 60 * 60 * 1000).toISOString(),
+          startAt: zonedDateTimeToUtc(formData.date, formData.time, "Asia/Manila").toISOString(),
+          endAt: zonedDateTimeToUtc(formData.date, endTime, "Asia/Manila").toISOString(),
         }
       ];
 
@@ -183,8 +190,8 @@ export function ReservationFlowPage() {
         candidates.push({
           rank: index + 1,
           workspaceInstanceId: alt.id,
-          startAt: `${formData.date}T${formData.time}:00`,
-          endAt: new Date(new Date(`${formData.date}T${formData.time}:00`).getTime() + Number(formData.duration) * 60 * 60 * 1000).toISOString(),
+          startAt: zonedDateTimeToUtc(formData.date, formData.time, "Asia/Manila").toISOString(),
+          endAt: zonedDateTimeToUtc(formData.date, endTime, "Asia/Manila").toISOString(),
         });
       });
 

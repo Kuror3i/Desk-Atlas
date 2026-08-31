@@ -54,6 +54,18 @@ export interface BookingConfirmationEmailInput {
   bookingToken: string;
   qrIssuedAt: string;
   trackingUrl?: string;
+  qrImageUrl?: string;
+}
+
+export interface ManualResolutionEmailInput {
+  to: string;
+  customerFirstName?: string;
+  customerLastName?: string;
+  referenceCode: string;
+  businessName?: string;
+  businessEmail?: string;
+  businessPhone?: string;
+  trackingUrl?: string;
 }
 
 export interface PaymentProofReceivedEmailInput {
@@ -183,6 +195,11 @@ DeskAtlas Workspace Reservation System
 export function renderBookingConfirmationEmail(input: BookingConfirmationEmailInput): { subject: string; html: string; text: string } {
   const customerName = [input.customerFirstName, input.customerLastName].filter(Boolean).join(' ') || 'Customer';
   const subject = `Booking Confirmed: ${input.referenceCode} - DeskAtlas`;
+  const qrImageUrl =
+    input.qrImageUrl ||
+    `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+      input.bookingAccessUrl || input.bookingToken
+    )}`;
 
   const html = `
 <!DOCTYPE html>
@@ -200,6 +217,9 @@ export function renderBookingConfirmationEmail(input: BookingConfirmationEmailIn
     .details-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
     .details-table td:first-child { color: #64748b; font-weight: 500; width: 35%; }
     .details-table td:last-child { color: #0f172a; font-weight: 600; }
+    .qr-card { text-align: center; margin: 24px 0; background-color: #f8fafc; padding: 20px; border-radius: 12px; border: 1px dashed #cbd5e1; }
+    .qr-label { font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .qr-code-text { font-family: monospace; font-size: 15px; font-weight: 700; color: #0f172a; margin-top: 10px; margin-bottom: 4px; }
     .btn { display: inline-block; background-color: #15803d; color: #ffffff !important; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 16px 0; text-align: center; }
     .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; }
   </style>
@@ -237,8 +257,15 @@ export function renderBookingConfirmationEmail(input: BookingConfirmationEmailIn
         </tr>
       </table>
 
+      <div class="qr-card">
+        <div class="qr-label">Digital Access QR Pass</div>
+        <img src="${escapeHtml(qrImageUrl)}" alt="Digital Pass QR Code" width="200" height="200" style="display: block; margin: 0 auto; border-radius: 8px; border: 1px solid #e2e8f0; background: #ffffff; padding: 6px;" />
+        <div class="qr-code-text">${escapeHtml(input.referenceCode)}</div>
+        <p style="font-size: 12px; color: #64748b; margin: 0;">Present this QR code upon arrival at the workspace reception desk or kiosk.</p>
+      </div>
+
       <div style="text-align: center;">
-        <a href="${escapeHtml(input.bookingAccessUrl)}" class="btn">View Digital Pass & QR Code</a>
+        <a href="${escapeHtml(input.bookingAccessUrl)}" class="btn">View Digital Pass Online</a>
       </div>
 
       ${input.trackingUrl ? `
@@ -248,7 +275,6 @@ export function renderBookingConfirmationEmail(input: BookingConfirmationEmailIn
       ` : ''}
 
       <p style="font-size: 13px; color: #64748b; margin-top: 20px;">
-        Present your Digital Pass / Booking QR code at the reception desk upon arrival during your booked reservation window.<br><br>
         Direct Pass Link: <a href="${escapeHtml(input.bookingAccessUrl)}" style="color: #15803d; word-break: break-all;">${escapeHtml(input.bookingAccessUrl)}</a>
       </p>
     </div>
@@ -274,9 +300,105 @@ Start Time: ${input.bookingStartAt}
 End Time: ${input.bookingEndAt}
 
 Digital Pass / Booking QR Link: ${input.bookingAccessUrl}
+QR Code Image: ${qrImageUrl}
 ${input.trackingUrl ? `Track Reservation: ${input.trackingUrl}\n` : ''}
 Please present your Digital Pass / QR code upon arrival at the workspace.
 
+DeskAtlas Workspace Reservation System
+  `.trim();
+
+  return { subject, html, text };
+}
+
+export function renderManualResolutionEmail(input: ManualResolutionEmailInput): { subject: string; html: string; text: string } {
+  const customerName = [input.customerFirstName, input.customerLastName].filter(Boolean).join(' ') || 'Customer';
+  const businessName = input.businessName || 'DeskAtlas';
+  const businessEmail = input.businessEmail || 'support@deskatlas.com';
+  const subject = `Reservation Update: Manual Resolution Needed [${input.referenceCode}]`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 24px; }
+    .card { background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; max-width: 560px; margin: 0 auto; padding: 32px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .header { margin-bottom: 24px; border-bottom: 1px solid #f1f5f9; padding-bottom: 16px; }
+    .title { font-size: 20px; font-weight: 700; color: #0f172a; margin: 0 0 8px 0; }
+    .badge { display: inline-block; background-color: #fef3c7; color: #b45309; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 700; }
+    .content { font-size: 15px; line-height: 1.6; color: #334155; }
+    .contact-box { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 20px 0; }
+    .contact-title { font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .contact-item { margin: 8px 0; font-size: 14px; }
+    .contact-label { color: #64748b; font-weight: 500; display: inline-block; width: 130px; }
+    .contact-value { color: #0f172a; font-weight: 600; }
+    .btn { display: inline-block; background-color: #0284c7; color: #ffffff !important; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 16px 0; text-align: center; }
+    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="title">Reservation Update</div>
+      <span class="badge">MANUAL RESOLUTION REQUIRED</span>
+    </div>
+    <div class="content">
+      <p>Hello ${escapeHtml(customerName)},</p>
+      <p>Thank you for completing your payment for reservation <strong>${escapeHtml(input.referenceCode)}</strong>.</p>
+      <p>Your payment has been successfully recorded. However, due to high demand or scheduling conflicts, your requested workspace spot could not be automatically assigned and is currently queued for manual resolution by our team.</p>
+      
+      <p>Please reach out to the business using the registered contact details below to confirm or select an alternate workspace:</p>
+
+      <div class="contact-box">
+        <div class="contact-title">${escapeHtml(businessName)} Contact Details</div>
+        <div class="contact-item">
+          <span class="contact-label">Business Email:</span>
+          <span class="contact-value"><a href="mailto:${escapeHtml(businessEmail)}" style="color: #0284c7; text-decoration: underline;">${escapeHtml(businessEmail)}</a></span>
+        </div>
+        ${input.businessPhone ? `
+        <div class="contact-item">
+          <span class="contact-label">Business Phone:</span>
+          <span class="contact-value">${escapeHtml(input.businessPhone)}</span>
+        </div>
+        ` : ''}
+        <div class="contact-item">
+          <span class="contact-label">Reference Code:</span>
+          <span class="contact-value"><code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${escapeHtml(input.referenceCode)}</code></span>
+        </div>
+      </div>
+
+      ${input.trackingUrl ? `
+      <div style="text-align: center;">
+        <a href="${escapeHtml(input.trackingUrl)}" class="btn">Track Reservation Status</a>
+      </div>
+      <p style="font-size: 13px; color: #64748b; margin-top: 16px;">
+        Live Tracking Link: <a href="${escapeHtml(input.trackingUrl)}" style="color: #0284c7; word-break: break-all;">${escapeHtml(input.trackingUrl)}</a>
+      </p>
+      ` : ''}
+    </div>
+    <div class="footer">
+      DeskAtlas Workspace Reservation System &bull; This is an automated transactional message.
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const text = `
+DeskAtlas Reservation Update: Manual Resolution Needed
+Reference: ${input.referenceCode}
+
+Hello ${customerName},
+
+Thank you for your payment for reservation ${input.referenceCode}.
+Your payment has been received, but your requested workspace spot could not be automatically assigned and requires manual resolution.
+
+Please contact ${businessName} directly using the registered business details:
+Business Email: ${businessEmail}
+${input.businessPhone ? `Business Phone: ${input.businessPhone}\n` : ''}Reference Code: ${input.referenceCode}
+
+${input.trackingUrl ? `Track Reservation: ${input.trackingUrl}\n` : ''}
 DeskAtlas Workspace Reservation System
   `.trim();
 
@@ -608,6 +730,33 @@ export class TransactionalEmailService {
         return { success: true, id: 'webhook-booking-confirmed' };
       } catch (err: any) {
         console.warn('[TransactionalEmail] Booking confirmed webhook dispatch error:', err.message);
+      }
+    }
+
+    return this.sendEmail({
+      to: input.to,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
+  }
+
+  async sendManualResolutionEmail(input: ManualResolutionEmailInput): Promise<EmailSendResult> {
+    const rendered = renderManualResolutionEmail(input);
+
+    if (!this.apiKey && this.webhookUrl) {
+      try {
+        await this.fetcher(this.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            template: 'manual-resolution',
+            ...input,
+          }),
+        });
+        return { success: true, id: 'webhook-manual-resolution' };
+      } catch (err: any) {
+        console.warn('[TransactionalEmail] Manual resolution webhook dispatch error:', err.message);
       }
     }
 

@@ -240,6 +240,51 @@ async function runTests() {
     assert.ok(!jsonString.includes("proofs/"));
   });
 
+  // 8. Expired awaiting proof (1hr) vanishes from admin reservations
+  await runTest("expired awaiting proof (1hr) vanishes from admin reservations", async () => {
+    const freshRepo = new ReservationMemoryRepository();
+    let clock = new Date("2026-08-29T10:00:00.000Z");
+    const testNowProvider = () => clock;
+    const testPaymentSessionService = createPaymentSessionService(freshRepo, testNowProvider);
+    const testReservationService = createReservationService(
+      freshRepo,
+      workspaceRepo,
+      freshRepo,
+      testPaymentSessionService
+    );
+    const testAdminReservationService = createAdminReservationService(freshRepo, testNowProvider);
+
+    const pendingRes = await testReservationService.createReservation({
+      source: "WEB",
+      customerFirstName: "Charlie",
+      customerLastName: "Brown",
+      customerEmail: "charlie@example.com",
+      candidates: [
+        { rank: 0, workspaceInstanceId: instance1.id, startAt: "2026-08-29T15:00:00.000Z", endAt: "2026-08-29T17:00:00.000Z" },
+      ],
+    }, { paymentLinkBaseUrl: "https://deskatlas.test/pay" });
+
+    // While within 1 hour: visible in "all" and "awaiting_proof"
+    let listAll = await testAdminReservationService.listReservations("all");
+    let listAwaiting = await testAdminReservationService.listReservations("awaiting_proof");
+    assert.strictEqual(listAll.total, 1);
+    assert.strictEqual(listAwaiting.total, 1);
+
+    // Advance clock by 30 mins: still visible
+    clock = new Date("2026-08-29T10:30:00.000Z");
+    listAll = await testAdminReservationService.listReservations("all");
+    listAwaiting = await testAdminReservationService.listReservations("awaiting_proof");
+    assert.strictEqual(listAll.total, 1);
+    assert.strictEqual(listAwaiting.total, 1);
+
+    // Advance clock by 61 mins (> 1hr expiry): vanishes from reservations
+    clock = new Date("2026-08-29T11:01:00.000Z");
+    listAll = await testAdminReservationService.listReservations("all");
+    listAwaiting = await testAdminReservationService.listReservations("awaiting_proof");
+    assert.strictEqual(listAll.total, 0);
+    assert.strictEqual(listAwaiting.total, 0);
+  });
+
   console.log("All MF-02 Admin Reservations tests passed!");
 }
 

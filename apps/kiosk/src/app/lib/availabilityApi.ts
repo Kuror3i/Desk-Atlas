@@ -87,3 +87,25 @@ export async function fetchTemplateAvailability(input: {
 
   return body as TemplateAvailabilityResult;
 }
+
+export async function fetchOccupiedInstances(input?: {
+  nowIso?: string;
+}): Promise<{ occupiedInstanceIds: string[]; asOf: string }> {
+  const params = new URLSearchParams({
+    occupiedNow: 'true',
+  });
+  if (input?.nowIso) {
+    params.set('nowIso', input.nowIso);
+  }
+  const response = await fetch(`/api/availability?${params.toString()}`, {
+    cache: 'no-store',
+  });
+  const body = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(body.error ?? `Occupied instances request failed with status ${response.status}`);
+  }
+
+  return body as { occupiedInstanceIds: string[]; asOf: string };
+}
+

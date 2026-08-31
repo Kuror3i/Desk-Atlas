@@ -132,6 +132,31 @@ export class InMemoryAvailabilityRepository implements AvailabilityRepository {
       })
       .map(({ workspaceInstanceId: _workspaceInstanceId, ...reservation }) => ({ ...reservation }));
   }
+
+  async listOccupiedInstances(
+    rangeStartIso: string,
+    rangeEndIso: string
+  ): Promise<string[]> {
+    const occupied = new Set<string>();
+    for (const res of this.reservations) {
+      if (
+        (res.reservationStatus === 'CONFIRMED' || res.reservationStatus === 'CHECKED_IN') &&
+        overlaps(res.startAt, res.endAt, rangeStartIso, rangeEndIso)
+      ) {
+        occupied.add(res.workspaceInstanceId);
+      }
+    }
+    for (const block of this.scheduleBlocks) {
+      if (
+        block.scope === 'WORKSPACE' &&
+        block.workspaceInstanceId &&
+        overlaps(block.startAt, block.endAt, rangeStartIso, rangeEndIso)
+      ) {
+        occupied.add(block.workspaceInstanceId);
+      }
+    }
+    return Array.from(occupied);
+  }
 }
 
 function overlaps(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string) {

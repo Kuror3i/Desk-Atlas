@@ -48,6 +48,12 @@ export interface AvailabilityRepository {
     rangeEndIso: string
   ): Promise<BlockingReservationWindow[]>;
   listWorkspaceInstancesByTemplate?(templateId: string): Promise<WorkspaceInstanceDetails[]>;
+  listOccupiedInstances?(rangeStartIso: string, rangeEndIso: string): Promise<string[]>;
+}
+
+export interface OccupiedInstancesResult {
+  occupiedInstanceIds: string[];
+  asOf: string;
 }
 
 export type AvailabilityDateReason =

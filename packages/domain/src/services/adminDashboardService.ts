@@ -43,11 +43,17 @@ export class AdminDashboardService {
     const rangeBounds = calculateRangeBounds(now, range, this.timezone);
 
     // 1. Metric: Reservations
-    const currentReservations = reservations.filter((r) =>
-      isWithinRange(r.createdAt, rangeBounds.currentStart, rangeBounds.currentEnd)
+    const currentReservations = reservations.filter(
+      (r) =>
+        ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(r.reservationStatus) &&
+        r.bookingStartAt !== null &&
+        isWithinRange(r.bookingStartAt, rangeBounds.currentStart, rangeBounds.currentEnd)
     );
-    const prevReservations = reservations.filter((r) =>
-      isWithinRange(r.createdAt, rangeBounds.prevStart, rangeBounds.prevEnd)
+    const prevReservations = reservations.filter(
+      (r) =>
+        ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(r.reservationStatus) &&
+        r.bookingStartAt !== null &&
+        isWithinRange(r.bookingStartAt, rangeBounds.prevStart, rangeBounds.prevEnd)
     );
     const reservationsMetric = {
       label: getReservationsMetricLabel(range),

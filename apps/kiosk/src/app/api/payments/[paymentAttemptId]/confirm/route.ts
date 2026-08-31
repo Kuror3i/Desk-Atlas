@@ -8,6 +8,7 @@ import {
   createTransactionalEmailService,
   hashBookingToken,
   ReservationSupabaseRepository,
+  SupabaseSettingsRepository,
 } from "@deskatlas/domain";
 
 export const runtime = "nodejs";
@@ -26,15 +27,46 @@ export async function POST(
     const reservationRepository = new ReservationSupabaseRepository();
     const counterPaymentService = createCounterPaymentService(reservationRepository);
     const counterPaymentRecord = await counterPaymentService.getCounterPaymentRecord(paymentAttemptId);
+    let actorUserId = String(body.actorUserId ?? body.actor?.userId ?? "").trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorUserId)) {
+      const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && serviceRoleKey) {
+        try {
+          const res = await fetch(
+            `${supabaseUrl.replace(/\/$/, "")}/rest/v1/staff_profiles?select=user_id&is_active=eq.true&limit=1`,
+            {
+              headers: {
+                apikey: serviceRoleKey,
+                Authorization: `Bearer ${serviceRoleKey}`,
+              },
+              cache: "no-store",
+            }
+          );
+          if (res.ok) {
+            const profiles = await res.json();
+            if (Array.isArray(profiles) && profiles[0]?.user_id) {
+              actorUserId = profiles[0].user_id;
+            }
+          }
+        } catch {
+          // fallback
+        }
+      }
+    }
+
     const result = await counterPaymentService.confirmPayment({
       paymentAttemptId,
       actor: {
-        userId: String(body.actorUserId ?? "").trim(),
-        role: body.actorRole,
+        userId: actorUserId,
+        role: body.actorRole ?? body.actor?.role ?? "STAFF",
       },
     });
 
-    if (result.reservationStatus === "CONFIRMED" && result.assignedCandidate) {
+    if (
+      (result.reservationStatus === "CONFIRMED" || result.reservationStatus === "CHECKED_IN") &&
+      result.assignedCandidate
+    ) {
       const bookingAccessService = createBookingAccessService(reservationRepository);
       const bookingAccessBaseUrl =
         process.env.BOOKING_ACCESS_BASE_URL ??
@@ -74,6 +106,44 @@ export async function POST(
           });
         }
       }
+    } else if (result.reservationStatus === "NEEDS_MANUAL_RESOLUTION") {
+      const trackingBaseUrl =
+        process.env.TRACKING_BASE_URL ??
+        process.env.DESKATLAS_PUBLIC_APP_URL ??
+        request.nextUrl.origin.replace(/\/$/, "");
+      const trackingUrl = buildReservationTrackingUrl(trackingBaseUrl, result.reservationReferenceCode);
+
+      let businessEmail = process.env.BUSINESS_CONTACT_EMAIL || "support@deskatlas.com";
+      let businessName = "DeskAtlas";
+      let businessPhone: string | undefined;
+
+      try {
+        const settingsRepo = new SupabaseSettingsRepository();
+        const settings = await settingsRepo.getBusinessSettings();
+        if (settings.contactEmail) {
+          businessEmail = settings.contactEmail;
+        }
+        if (settings.businessName) {
+          businessName = settings.businessName;
+        }
+        if (settings.contactPhone) {
+          businessPhone = settings.contactPhone;
+        }
+      } catch {
+        // fallback
+      }
+
+      const emailService = createTransactionalEmailService();
+      await emailService.sendManualResolutionEmail({
+        to: counterPaymentRecord.customerEmail,
+        customerFirstName: counterPaymentRecord.customerFirstName,
+        customerLastName: counterPaymentRecord.customerLastName,
+        referenceCode: result.reservationReferenceCode,
+        businessName,
+        businessEmail,
+        businessPhone,
+        trackingUrl,
+      });
     }
 
     return NextResponse.json(result);

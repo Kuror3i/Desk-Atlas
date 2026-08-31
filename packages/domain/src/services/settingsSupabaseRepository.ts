@@ -309,8 +309,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       qr_image_path: input.qrImagePath,
       instructions: input.instructions,
       allow_web: input.allowWeb,
-      allowKiosk: input.allowKiosk,
-      allow_kiosk: input.allowKiosk,
+      allow_kiosk: input.allowKiosk ?? false,
       is_active: input.isActive,
       updated_at: new Date().toISOString(),
     };

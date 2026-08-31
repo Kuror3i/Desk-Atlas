@@ -89,6 +89,14 @@ export async function POST(request: NextRequest) {
       if (rpcRes.ok) {
         const result = await rpcRes.json();
         if (result.success && result.user) {
+          const userRole = String(result.user.role || '').toUpperCase();
+          if (userRole !== 'ADMIN') {
+            return NextResponse.json(
+              { error: 'Access denied. Only admin accounts can log into the Admin Portal.' },
+              { status: 403 }
+            );
+          }
+
           resetRateLimit(rateLimitKey);
           return NextResponse.json({
             user: result.user,
@@ -164,6 +172,14 @@ export async function POST(request: NextRequest) {
     if (!profile || !profile.is_active) {
       return NextResponse.json(
         { error: 'Account is not authorized or is deactivated' },
+        { status: 403 }
+      );
+    }
+
+    const profileRole = String(profile.role || '').toUpperCase();
+    if (profileRole !== 'ADMIN') {
+      return NextResponse.json(
+        { error: 'Access denied. Only admin accounts can log into the Admin Portal.' },
         { status: 403 }
       );
     }

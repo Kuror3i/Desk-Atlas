@@ -104,8 +104,8 @@ export function TrackingPage() {
                 value={
                   data.finalAssignment
                     ? `${formatDateTime(data.finalAssignment.bookingStartAt)} to ${formatTime(
-                        data.finalAssignment.bookingEndAt
-                      )}`
+                      data.finalAssignment.bookingEndAt
+                    )}`
                     : "Not assigned yet"
                 }
               />

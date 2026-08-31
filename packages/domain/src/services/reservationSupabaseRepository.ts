@@ -48,16 +48,15 @@ import {
 
 export class ReservationSupabaseRepository
   implements
-    ReservationRepository,
-    ReservationPaymentRepository,
-    PaymentReviewRepository,
-    BookingAccessRepository,
-    CounterPaymentRepository,
-    StaffOperationsRepository,
-    GuestReservationTrackingRepository,
-    ReportsRepository,
-    AdminReservationRepository
-{
+  ReservationRepository,
+  ReservationPaymentRepository,
+  PaymentReviewRepository,
+  BookingAccessRepository,
+  CounterPaymentRepository,
+  StaffOperationsRepository,
+  GuestReservationTrackingRepository,
+  ReportsRepository,
+  AdminReservationRepository {
   private readonly restUrl: string;
   private readonly serviceRoleKey: string;
 
@@ -164,7 +163,7 @@ export class ReservationSupabaseRepository
             p_rate_snapshot: rateSnapshot,
             p_amount_due: amountDue,
             p_candidates: request.candidates,
-            p_payment_method_id: request.paymentMethodId,
+            p_payment_method_id: request.paymentMethodId ?? null,
           }),
         }
       );
@@ -254,7 +253,7 @@ export class ReservationSupabaseRepository
 
   async listActiveKioskPaymentMethods(): Promise<PaymentMethod[]> {
     const rows = await this.request<any[]>(
-      "/payment_methods?select=*&is_active=eq.true&allow_kiosk=eq.true&order=display_order.asc"
+      "/payment_methods?select=*&is_active=eq.true&order=display_order.asc"
     );
 
     return rows.map((row) => ({
@@ -600,7 +599,7 @@ export class ReservationSupabaseRepository
       return false;
     }
 
-    if (reservation.status !== "CONFIRMED") {
+    if (reservation.status !== "CONFIRMED" && reservation.status !== "CHECKED_IN") {
       throw new Error("Booking access can only be issued for confirmed reservations.");
     }
 
@@ -659,17 +658,17 @@ export class ReservationSupabaseRepository
     )?.[0];
     const workspaceTemplate = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const floor = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
+        )
+      )?.[0]
       : null;
 
     return {
@@ -731,7 +730,7 @@ export class ReservationSupabaseRepository
 
   async listOperationalReservations(_nowIso: string): Promise<StaffOperationalReservation[]> {
     const reservations = await this.request<any[]>(
-      "/reservations?select=*&status=in.(CONFIRMED,CHECKED_IN,COMPLETED)&order=created_at.desc&limit=200"
+      "/reservations?select=*&status=in.(CONFIRMED,CHECKED_IN,COMPLETED,PENDING_COUNTER_CONFIRMATION)&order=created_at.desc&limit=200"
     );
 
     const summaries = await Promise.all(
@@ -944,24 +943,24 @@ export class ReservationSupabaseRepository
 
     const workspaceInstance = candidate
       ? (
-          await this.request<any[]>(
-            `/workspace_instances?select=*&id=eq.${encodeURIComponent(candidate.workspace_instance_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_instances?select=*&id=eq.${encodeURIComponent(candidate.workspace_instance_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const workspaceTemplate = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const floor = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
+        )
+      )?.[0]
       : null;
 
     return {
@@ -975,18 +974,18 @@ export class ReservationSupabaseRepository
       checkedOutAt: reservation.checked_out_at,
       finalAssignment: candidate
         ? {
-            workspaceInstanceId: candidate.workspace_instance_id,
-            workspaceDisplayName:
-              workspaceInstance?.display_name ??
-              workspaceInstance?.instance_code ??
-              candidate.workspace_instance_id,
-            workspaceInstanceCode:
-              workspaceInstance?.instance_code ?? candidate.workspace_instance_id,
-            workspaceTemplateName: workspaceTemplate?.name ?? "Workspace",
-            floorName: floor?.name ?? "Unknown Floor",
-            bookingStartAt: candidate.start_at,
-            bookingEndAt: candidate.end_at,
-          }
+          workspaceInstanceId: candidate.workspace_instance_id,
+          workspaceDisplayName:
+            workspaceInstance?.display_name ??
+            workspaceInstance?.instance_code ??
+            candidate.workspace_instance_id,
+          workspaceInstanceCode:
+            workspaceInstance?.instance_code ?? candidate.workspace_instance_id,
+          workspaceTemplateName: workspaceTemplate?.name ?? "Workspace",
+          floorName: floor?.name ?? "Unknown Floor",
+          bookingStartAt: candidate.start_at,
+          bookingEndAt: candidate.end_at,
+        }
         : null,
     };
   }
@@ -1202,14 +1201,14 @@ export class ReservationSupabaseRepository
     const assignedCandidate =
       row.assigned_candidate_id && row.assigned_candidate_rank !== null
         ? {
-            id: row.assigned_candidate_id,
-            reservationId: row.reservation_id,
-            rank: row.assigned_candidate_rank,
-            workspaceInstanceId: row.assigned_workspace_instance_id,
-            startAt: row.assigned_start_at,
-            endAt: row.assigned_end_at,
-            isAssigned: true,
-          }
+          id: row.assigned_candidate_id,
+          reservationId: row.reservation_id,
+          rank: row.assigned_candidate_rank,
+          workspaceInstanceId: row.assigned_workspace_instance_id,
+          startAt: row.assigned_start_at,
+          endAt: row.assigned_end_at,
+          isAssigned: true,
+        }
         : null;
 
     return {
@@ -1248,7 +1247,7 @@ export class ReservationSupabaseRepository
       )?.[0];
     }
 
-    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status)) {
+    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED", "PENDING_COUNTER_CONFIRMATION"].includes(reservation.status)) {
       return null;
     }
 
@@ -1261,24 +1260,24 @@ export class ReservationSupabaseRepository
 
     const workspaceInstance = candidate
       ? (
-          await this.request<any[]>(
-            `/workspace_instances?select=*&id=eq.${encodeURIComponent(candidate.workspace_instance_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_instances?select=*&id=eq.${encodeURIComponent(candidate.workspace_instance_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const workspaceTemplate = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const floor = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
+        )
+      )?.[0]
       : null;
 
     return {
@@ -1330,24 +1329,24 @@ export class ReservationSupabaseRepository
 
     const workspaceInstance = assignedCandidate
       ? (
-          await this.request<any[]>(
-            `/workspace_instances?select=*&id=eq.${encodeURIComponent(assignedCandidate.workspace_instance_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_instances?select=*&id=eq.${encodeURIComponent(assignedCandidate.workspace_instance_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const workspaceTemplate = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/workspace_templates?select=*&id=eq.${encodeURIComponent(workspaceInstance.template_id)}&limit=1`
+        )
+      )?.[0]
       : null;
     const floor = workspaceInstance
       ? (
-          await this.request<any[]>(
-            `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
-          )
-        )?.[0]
+        await this.request<any[]>(
+          `/floors?select=*&id=eq.${encodeURIComponent(workspaceInstance.floor_id)}&limit=1`
+        )
+      )?.[0]
       : null;
 
     return {
@@ -1384,12 +1383,13 @@ export class ReservationSupabaseRepository
       return [];
     }
 
-    const [candidatesRows, instancesRows, templatesRows, floorsRows] =
+    const [candidatesRows, instancesRows, templatesRows, floorsRows, paymentAttemptsRows] =
       await Promise.all([
         this.request<any[]>("/reservation_candidates?select=*&order=rank.asc"),
         this.request<any[]>("/workspace_instances?select=*"),
         this.request<any[]>("/workspace_templates?select=*"),
         this.request<any[]>("/floors?select=*"),
+        this.request<any[]>("/payment_attempts?select=*&order=created_at.desc"),
       ]);
 
     const candidatesByReservation = new Map<string, any[]>();
@@ -1397,6 +1397,13 @@ export class ReservationSupabaseRepository
       const list = candidatesByReservation.get(c.reservation_id) ?? [];
       list.push(c);
       candidatesByReservation.set(c.reservation_id, list);
+    }
+
+    const attemptsByReservation = new Map<string, any>();
+    for (const pa of paymentAttemptsRows ?? []) {
+      if (!attemptsByReservation.has(pa.reservation_id)) {
+        attemptsByReservation.set(pa.reservation_id, pa);
+      }
     }
 
     const instancesById = new Map<string, any>((instancesRows ?? []).map((i) => [i.id, i]));
@@ -1412,6 +1419,9 @@ export class ReservationSupabaseRepository
       const instance = targetCandidate ? instancesById.get(targetCandidate.workspace_instance_id) : null;
       const template = instance ? templatesById.get(instance.template_id) : null;
       const floor = instance ? floorsById.get(instance.floor_id) : null;
+
+      const latestAttempt = attemptsByReservation.get(r.id);
+      const paymentExpiresAt = latestAttempt?.expires_at ?? null;
 
       const pres = mapStatusPresentation(r.status);
       const customerName = `${r.customer_first_name} ${r.customer_last_name}`.trim();
@@ -1452,6 +1462,7 @@ export class ReservationSupabaseRepository
         confirmedAt: r.confirmed_at,
         checkedInAt: r.checked_in_at,
         checkedOutAt: r.checked_out_at,
+        paymentExpiresAt,
       };
     });
   }

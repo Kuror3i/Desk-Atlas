@@ -373,6 +373,7 @@ export interface AdminReservationSummary {
   confirmedAt?: string | null;
   checkedInAt?: string | null;
   checkedOutAt?: string | null;
+  paymentExpiresAt?: string | null;
 }
 
 export interface AdminReservationCandidateSummary {

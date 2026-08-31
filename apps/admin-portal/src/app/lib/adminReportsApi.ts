@@ -11,11 +11,15 @@ export async function fetchAdminReportsSnapshot(range: AdminReportRange = "30day
 
 export async function downloadAdminReport(
   exportType: AdminReportExportType,
-  range?: AdminReportRange
+  range?: AdminReportRange,
+  format: "xlsx" | "csv" = "xlsx"
 ): Promise<void> {
-  const url = range
-    ? `/api/admin/reports/export?type=${encodeURIComponent(exportType)}&range=${encodeURIComponent(range)}`
-    : `/api/admin/reports/export?type=${encodeURIComponent(exportType)}`;
+  const query = new URLSearchParams();
+  query.set("type", exportType);
+  if (range) query.set("range", range);
+  query.set("format", format);
+
+  const url = `/api/admin/reports/export?${query.toString()}`;
 
   const response = await fetch(url, {
     cache: "no-store",
@@ -30,7 +34,7 @@ export async function downloadAdminReport(
   const disposition = response.headers.get("Content-Disposition");
   const filename =
     disposition?.match(/filename="([^"]+)"/)?.[1] ??
-    `deskatlas-${exportType}.csv`;
+    `deskatlas-${exportType}.${format}`;
 
   const downloadUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");

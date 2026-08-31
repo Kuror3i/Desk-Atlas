@@ -12,6 +12,7 @@ import {
   ReportReservationRecord,
 } from "../models/reports";
 import { ReportsRepository } from "./reportsRepository";
+import { buildAdminExcelWorkbook } from "./excelReportBuilder";
 
 const REPORT_CATEGORY_DEFINITIONS: Array<{
   id: AdminReportCategorySummary["id"];
@@ -155,11 +156,13 @@ export class ReportsService {
 
   async exportAdminReport(
     exportType: AdminReportExportType,
-    range?: AdminReportRange
+    range?: AdminReportRange,
+    format: "csv" | "xlsx" = "csv"
   ): Promise<{
     filename: string;
     contentType: string;
     content: string;
+    buffer?: Buffer;
   }> {
     const now = this.nowProvider();
     let reservations = await this.repository.listReportReservations();
@@ -175,14 +178,50 @@ export class ReportsService {
       );
     }
 
-    const rows = this.buildExportRows(exportType, reservations, payments);
     const filenameDate = now.toISOString().slice(0, 10);
     const rangeSuffix = range ? `-${range}` : "";
+
+    if (format === "xlsx") {
+      const snapshot = await this.getAdminReportsSnapshot(range ?? "month");
+      const buffer = await buildAdminExcelWorkbook({
+        exportType,
+        range,
+        snapshot,
+        reservations,
+        payments,
+        now,
+      });
+
+      return {
+        filename: `deskatlas-${exportType}${rangeSuffix}-${filenameDate}.xlsx`,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content: buffer.toString("base64"),
+        buffer,
+      };
+    }
+
+    const rows = this.buildExportRows(exportType, reservations, payments);
 
     return {
       filename: `deskatlas-${exportType}${rangeSuffix}-${filenameDate}.csv`,
       contentType: "text/csv; charset=utf-8",
       content: toCsv(rows),
+    };
+  }
+
+  async exportAdminExcelReport(
+    exportType: AdminReportExportType,
+    range?: AdminReportRange
+  ): Promise<{
+    filename: string;
+    contentType: string;
+    buffer: Buffer;
+  }> {
+    const result = await this.exportAdminReport(exportType, range, "xlsx");
+    return {
+      filename: result.filename,
+      contentType: result.contentType,
+      buffer: result.buffer!,
     };
   }
 

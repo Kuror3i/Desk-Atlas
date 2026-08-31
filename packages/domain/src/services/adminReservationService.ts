@@ -29,8 +29,29 @@ export class AdminReservationService {
   ): Promise<{ reservations: AdminReservationSummary[]; total: number }> {
     const list = await this.repository.listAdminReservations();
     const now = this.nowProvider();
+    const nowMs = now.getTime();
 
-    let filtered = list;
+    const isAwaitingProofExpired = (r: AdminReservationSummary): boolean => {
+      if (r.reservationStatus === "EXPIRED") {
+        return true;
+      }
+      if (r.reservationStatus === "PENDING_PAYMENT") {
+        if (r.paymentExpiresAt) {
+          const expMs = new Date(r.paymentExpiresAt).getTime();
+          if (!isNaN(expMs) && expMs <= nowMs) {
+            return true;
+          }
+        } else if (r.createdAt) {
+          const createdMs = new Date(r.createdAt).getTime();
+          if (!isNaN(createdMs) && createdMs + 60 * 60 * 1000 <= nowMs) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    let filtered = list.filter((r) => !isAwaitingProofExpired(r));
 
     if (filter === "checked_in") {
       filtered = filtered.filter(
@@ -41,7 +62,7 @@ export class AdminReservationService {
         if (r.reservationStatus === "CONFIRMED" || r.reservationStatus === "CHECKED_IN") {
           return true;
         }
-        if (r.startAt && new Date(r.startAt).getTime() >= now.getTime()) {
+        if (r.startAt && new Date(r.startAt).getTime() >= nowMs) {
           return true;
         }
         return false;

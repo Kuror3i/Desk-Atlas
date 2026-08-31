@@ -67,16 +67,15 @@ interface StoredPaymentAttempt {
 
 export class ReservationMemoryRepository
   implements
-    ReservationRepository,
-    ReservationPaymentRepository,
-    PaymentReviewRepository,
-    BookingAccessRepository,
-    CounterPaymentRepository,
-    StaffOperationsRepository,
-    GuestReservationTrackingRepository,
-    ReportsRepository,
-    AdminReservationRepository
-{
+  ReservationRepository,
+  ReservationPaymentRepository,
+  PaymentReviewRepository,
+  BookingAccessRepository,
+  CounterPaymentRepository,
+  StaffOperationsRepository,
+  GuestReservationTrackingRepository,
+  ReportsRepository,
+  AdminReservationRepository {
   private reservations: ReservationResponseDTO[] = [];
   private paymentAttempts = new Map<string, StoredPaymentAttempt>();
   private bookingScanEvents: Array<{
@@ -88,7 +87,7 @@ export class ReservationMemoryRepository
   private operationQueue = Promise.resolve();
   private nextApprovalFailureMessage: string | null = null;
   private businessName: string = "DeskAtlas";
-  constructor(private readonly nowProvider: () => Date = () => new Date()) {}
+  constructor(private readonly nowProvider: () => Date = () => new Date()) { }
 
   setBusinessName(name: string): void {
     this.businessName = name;
@@ -210,11 +209,18 @@ export class ReservationMemoryRepository
     }
 
     if (request.source === "KIOSK") {
-      const method = this.paymentMethods.find(
-        (entry) => entry.id === request.paymentMethodId && entry.isActive && entry.allowKiosk
-      );
-      if (!method) {
-        throw new Error("Invalid kiosk payment method.");
+      let methodId: string | null = null;
+      if (request.paymentMethodId) {
+        const method = this.paymentMethods.find(
+          (entry) => entry.id === request.paymentMethodId && entry.isActive
+        );
+        if (!method) {
+          throw new Error("Invalid kiosk payment method.");
+        }
+        methodId = method.id;
+      } else {
+        const activeMethod = this.paymentMethods.find((entry) => entry.isActive);
+        methodId = activeMethod ? activeMethod.id : null;
       }
 
       const paymentAttemptId = randomUUID();
@@ -227,7 +233,7 @@ export class ReservationMemoryRepository
         status: "PENDING",
         proofSubmittedAt: null,
         proofStoragePath: null,
-        paymentMethodId: method.id,
+        paymentMethodId: methodId,
         attemptNumber: 1,
         createdAt: now,
         processedByUserId: null,
@@ -593,8 +599,9 @@ export class ReservationMemoryRepository
         attempt.rejectionReason = null;
 
         if (assignedCandidate) {
-          reservation.status = "CONFIRMED";
+          reservation.status = "CHECKED_IN";
           reservation.confirmedAt = reservation.confirmedAt ?? input.processedAt;
+          reservation.checkedInAt = reservation.checkedInAt ?? input.processedAt;
         } else {
           reservation.status = "NEEDS_MANUAL_RESOLUTION";
         }
@@ -633,7 +640,7 @@ export class ReservationMemoryRepository
     const reservation = this.requireReservation(input.reservationId);
     const assignedCandidate = (reservation.candidates ?? []).find((candidate) => candidate.isAssigned);
 
-    if (!assignedCandidate || reservation.status !== "CONFIRMED") {
+    if (!assignedCandidate || (reservation.status !== "CONFIRMED" && reservation.status !== "CHECKED_IN")) {
       throw new Error("Booking access can only be issued for confirmed reservations.");
     }
 
@@ -694,7 +701,7 @@ export class ReservationMemoryRepository
 
   async listOperationalReservations(_nowIso: string): Promise<StaffOperationalReservation[]> {
     return this.reservations
-      .filter((reservation) => ["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status))
+      .filter((reservation) => ["CONFIRMED", "CHECKED_IN", "COMPLETED", "PENDING_COUNTER_CONFIRMATION"].includes(reservation.status))
       .map((reservation) => this.buildOperationalReservation(reservation))
       .sort(compareOperationalReservations);
   }
@@ -706,7 +713,7 @@ export class ReservationMemoryRepository
       (r) => r.id === idOrReferenceCode || r.referenceCode === idOrReferenceCode
     );
 
-    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED"].includes(reservation.status)) {
+    if (!reservation || !["CONFIRMED", "CHECKED_IN", "COMPLETED", "PENDING_COUNTER_CONFIRMATION"].includes(reservation.status)) {
       return null;
     }
 
@@ -827,14 +834,14 @@ export class ReservationMemoryRepository
       checkedOutAt: reservation.checkedOutAt ?? null,
       finalAssignment: assignedCandidate
         ? {
-            workspaceInstanceId: assignedCandidate.workspaceInstanceId,
-            workspaceDisplayName: assignedCandidate.workspaceInstanceId,
-            workspaceInstanceCode: assignedCandidate.workspaceInstanceId,
-            workspaceTemplateName: "Workspace",
-            floorName: "Unknown Floor",
-            bookingStartAt: assignedCandidate.startAt,
-            bookingEndAt: assignedCandidate.endAt,
-          }
+          workspaceInstanceId: assignedCandidate.workspaceInstanceId,
+          workspaceDisplayName: assignedCandidate.workspaceInstanceId,
+          workspaceInstanceCode: assignedCandidate.workspaceInstanceId,
+          workspaceTemplateName: "Workspace",
+          floorName: "Unknown Floor",
+          bookingStartAt: assignedCandidate.startAt,
+          bookingEndAt: assignedCandidate.endAt,
+        }
         : null,
     };
   }
@@ -1161,6 +1168,12 @@ export class ReservationMemoryRepository
           ? "Multiple Candidates"
           : mainCandidate?.workspaceInstanceId ?? "Unassigned";
 
+      const attempts = Array.from(this.paymentAttempts.values())
+        .filter((a) => a.reservationId === r.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const latestAttempt = attempts[0] ?? null;
+      const paymentExpiresAt = latestAttempt?.expiresAt ?? null;
+
       return {
         id: r.id,
         referenceCode: r.referenceCode,
@@ -1189,6 +1202,7 @@ export class ReservationMemoryRepository
         confirmedAt: r.confirmedAt,
         checkedInAt: r.checkedInAt,
         checkedOutAt: r.checkedOutAt,
+        paymentExpiresAt,
       };
     });
   }
@@ -1233,20 +1247,20 @@ export class ReservationMemoryRepository
 
     const assignedCandidate: AdminReservationCandidateSummary | null = assigned
       ? {
-          id: assigned.id,
-          rank: assigned.rank,
-          tier: getCandidateTier(assigned.rank),
-          workspaceInstanceId: assigned.workspaceInstanceId,
-          workspaceDisplayName: assigned.workspaceInstanceId,
-          workspaceInstanceCode: assigned.workspaceInstanceId,
-          workspaceTemplateName: "Workspace",
-          floorName: "Floor 1",
-          startAt: assigned.startAt,
-          endAt: assigned.endAt,
-          schedule: formatSchedule(assigned.startAt, assigned.endAt),
-          isAssigned: true,
-          color: getCandidateColor(assigned.rank),
-        }
+        id: assigned.id,
+        rank: assigned.rank,
+        tier: getCandidateTier(assigned.rank),
+        workspaceInstanceId: assigned.workspaceInstanceId,
+        workspaceDisplayName: assigned.workspaceInstanceId,
+        workspaceInstanceCode: assigned.workspaceInstanceId,
+        workspaceTemplateName: "Workspace",
+        floorName: "Floor 1",
+        startAt: assigned.startAt,
+        endAt: assigned.endAt,
+        schedule: formatSchedule(assigned.startAt, assigned.endAt),
+        isAssigned: true,
+        color: getCandidateColor(assigned.rank),
+      }
       : null;
 
     // Timeline building

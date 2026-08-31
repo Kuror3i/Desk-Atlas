@@ -605,8 +605,8 @@ function normalizeCreatePaymentMethodInput(input: CreatePaymentMethodInput): Cre
     accountNumber: input.accountNumber?.trim() || null,
     qrImagePath: input.qrImagePath?.trim() || null,
     instructions: input.instructions?.trim() || null,
-    allowWeb: Boolean(input.allowWeb),
-    allowKiosk: Boolean(input.allowKiosk),
+    allowWeb: input.methodType === 'CASH' ? false : (input.allowWeb !== undefined ? Boolean(input.allowWeb) : true),
+    allowKiosk: input.allowKiosk !== undefined ? Boolean(input.allowKiosk) : true,
     isActive: input.isActive !== undefined ? Boolean(input.isActive) : true,
     displayOrder,
   };
@@ -637,8 +637,8 @@ function normalizePaymentMethodInput(input: UpdatePaymentMethodInput): UpdatePay
     accountNumber: input.accountNumber?.trim() || null,
     qrImagePath: input.qrImagePath?.trim() || null,
     instructions: input.instructions?.trim() || null,
-    allowWeb: Boolean(input.allowWeb),
-    allowKiosk: Boolean(input.allowKiosk),
+    allowWeb: input.methodType === 'CASH' ? false : (input.allowWeb !== undefined ? Boolean(input.allowWeb) : true),
+    allowKiosk: input.allowKiosk !== undefined ? Boolean(input.allowKiosk) : true,
     isActive: Boolean(input.isActive),
     displayOrder:
       input.displayOrder !== undefined && Number.isInteger(input.displayOrder) && input.displayOrder >= 0

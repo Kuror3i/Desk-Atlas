@@ -20,8 +20,33 @@ export async function POST(
     const { reservationId } = await context.params;
     const body = await request.json();
     const service = createStaffOperationsService(new ReservationSupabaseRepository());
-    const actorUserId =
-      String(body.actor?.userId ?? body.actorUserId ?? "").trim() || "staff-user-id";
+    let actorUserId = String(body.actor?.userId ?? body.actorUserId ?? "").trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorUserId)) {
+      const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && serviceRoleKey) {
+        try {
+          const res = await fetch(
+            `${supabaseUrl.replace(/\/$/, "")}/rest/v1/staff_profiles?select=user_id&is_active=eq.true&limit=1`,
+            {
+              headers: {
+                apikey: serviceRoleKey,
+                Authorization: `Bearer ${serviceRoleKey}`,
+              },
+              cache: "no-store",
+            }
+          );
+          if (res.ok) {
+            const profiles = await res.json();
+            if (Array.isArray(profiles) && profiles[0]?.user_id) {
+              actorUserId = profiles[0].user_id;
+            }
+          }
+        } catch {
+          // fallback
+        }
+      }
+    }
     const actorRole = body.actor?.role ?? body.actorRole ?? "STAFF";
 
     const result = await service.checkInReservation({

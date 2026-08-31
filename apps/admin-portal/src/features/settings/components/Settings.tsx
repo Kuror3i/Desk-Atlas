@@ -113,7 +113,7 @@ export function Settings() {
     instructions: 'Scan QR code or transfer to mobile number, then upload the payment confirmation screenshot.',
     qrImagePath: null,
     allowWeb: true,
-    allowKiosk: false,
+    allowKiosk: true,
     isActive: true,
   });
 
@@ -837,8 +837,8 @@ export function Settings() {
           accountNumber: addPaymentForm.accountNumber.trim() || null,
           instructions: addPaymentForm.instructions.trim() || null,
           qrImagePath: addPaymentForm.qrImagePath,
-          allowWeb: addPaymentForm.allowWeb,
-          allowKiosk: addPaymentForm.allowKiosk,
+          allowWeb: true,
+          allowKiosk: true,
           isActive: addPaymentForm.isActive,
         }),
       });
@@ -860,7 +860,7 @@ export function Settings() {
         instructions: 'Transfer via GCash to mobile number or scan the QR code, then upload your proof screenshot.',
         qrImagePath: null,
         allowWeb: true,
-        allowKiosk: false,
+        allowKiosk: true,
         isActive: true,
       });
       showSuccess(`Payment method "${json.data.displayName}" added successfully!`);
@@ -938,10 +938,16 @@ export function Settings() {
       setSaving(true);
       setErrorMsg(null);
 
+      const methodToSave = {
+        ...method,
+        allowWeb: method.methodType !== 'CASH',
+        allowKiosk: true,
+      };
+
       const res = await fetch('/api/admin/settings/payment-methods', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(method),
+        body: JSON.stringify(methodToSave),
       });
 
       if (!res.ok) {
@@ -1604,38 +1610,8 @@ export function Settings() {
                         </div>
                       </div>
 
-                      {/* Bottom bar: Channel toggles and Save button */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--da-border-light)', paddingTop: '12px', flexWrap: 'wrap', gap: '10px' }}>
-                        <div style={{ display: 'flex', gap: '16px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: method.methodType === 'CASH' ? 'not-allowed' : 'pointer' }}>
-                            <input 
-                              type="checkbox"
-                              checked={method.allowWeb}
-                              disabled={method.methodType === 'CASH'}
-                              onChange={(e) => {
-                                const updated = [...paymentMethods];
-                                updated[idx] = { ...method, allowWeb: e.target.checked };
-                                setPaymentMethods(updated);
-                              }}
-                            />
-                            Allow for Online / Web
-                            {method.methodType === 'CASH' && <span style={{ fontSize: '10px', color: '#94A3B8' }}>(Cash counter-only)</span>}
-                          </label>
-
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
-                            <input 
-                              type="checkbox"
-                              checked={method.allowKiosk}
-                              onChange={(e) => {
-                                const updated = [...paymentMethods];
-                                updated[idx] = { ...method, allowKiosk: e.target.checked };
-                                setPaymentMethods(updated);
-                              }}
-                            />
-                            Allow for Kiosk
-                          </label>
-                        </div>
-
+                      {/* Bottom bar: Save button */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', borderTop: '1px solid var(--da-border-light)', paddingTop: '12px', flexWrap: 'wrap', gap: '10px' }}>
                         <button
                           type="button"
                           onClick={() => handleSavePaymentMethod(method)}
@@ -2635,26 +2611,8 @@ export function Settings() {
                 )}
               </div>
 
-              {/* Channels & Status */}
+              {/* Status */}
               <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', borderTop: '1px solid var(--da-border-light)', paddingTop: '10px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={addPaymentForm.allowWeb}
-                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, allowWeb: e.target.checked })}
-                  />
-                  Allow for Online / Web
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={addPaymentForm.allowKiosk}
-                    onChange={(e) => setAddPaymentForm({ ...addPaymentForm, allowKiosk: e.target.checked })}
-                  />
-                  Allow for Kiosk
-                </label>
-
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
                   <input
                     type="checkbox"

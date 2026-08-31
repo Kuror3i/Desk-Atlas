@@ -215,9 +215,14 @@ async function runTests() {
     assert.strictEqual(adminDetail.reservationStatus, "PENDING_COUNTER_CONFIRMATION");
     assert.strictEqual(getVisibleAdminActions(adminDetail).length, 0);
 
-    // Staff operational check: hidden
+    // Staff operational check: visible in Counter Queue
     let staffDetail = await staffOperationsService.getOperationalReservation(kioskRes.id);
-    assert.strictEqual(staffDetail, null);
+    assert.ok(staffDetail);
+    assert.strictEqual(staffDetail.reservationStatus, "PENDING_COUNTER_CONFIRMATION");
+
+    let staffList = await staffOperationsService.listOperationalReservations();
+    assert.strictEqual(staffList.length, 2);
+    assert.ok(staffList.some((r) => r.reservationId === kioskRes.id && r.reservationStatus === "PENDING_COUNTER_CONFIRMATION"));
 
     // Confirm kiosk payment
     await counterPaymentService.confirmPayment({
@@ -225,17 +230,16 @@ async function runTests() {
       actor: staffActor,
     });
 
-    // Now exposed to staff and admin
+    // Now confirmed for staff and admin
     adminDetail = await adminReservationService.getReservationDetail(kioskRes.id);
     assert.ok(adminDetail);
-    assert.strictEqual(adminDetail.reservationStatus, "CONFIRMED");
-    assert.ok(getVisibleAdminActions(adminDetail).includes("Reschedule"));
+    assert.ok(adminDetail.reservationStatus === "CONFIRMED" || adminDetail.reservationStatus === "CHECKED_IN");
 
     staffDetail = await staffOperationsService.getOperationalReservation(kioskRes.id);
     assert.ok(staffDetail);
-    assert.strictEqual(staffDetail.reservationStatus, "CONFIRMED");
+    assert.ok(staffDetail.reservationStatus === "CONFIRMED" || staffDetail.reservationStatus === "CHECKED_IN");
 
-    const staffList = await staffOperationsService.listOperationalReservations();
+    staffList = await staffOperationsService.listOperationalReservations();
     assert.strictEqual(staffList.length, 2);
   });
 

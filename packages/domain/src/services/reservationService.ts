@@ -132,22 +132,15 @@ export class ReservationService {
       };
     }
 
-    if (!this.paymentRepository) {
-      throw new ReservationError("Payment repository is required for kiosk reservations.");
-    }
-
-    const kioskPaymentMethodId = request.paymentMethodId?.trim() ?? "";
-    if (!kioskPaymentMethodId) {
-      throw new ReservationError("Payment method is required for kiosk reservations.");
-    }
-
-    const kioskPaymentMethods = await this.paymentRepository.listActiveKioskPaymentMethods();
-    const kioskPaymentMethod = kioskPaymentMethods.find(
-      (method) => method.id === kioskPaymentMethodId
-    );
-
-    if (!kioskPaymentMethod) {
-      throw new ReservationError("Invalid kiosk payment method.");
+    if (request.paymentMethodId && this.paymentRepository) {
+      const kioskPaymentMethodId = request.paymentMethodId.trim();
+      const kioskPaymentMethods = await this.paymentRepository.listActiveKioskPaymentMethods();
+      const kioskPaymentMethod = kioskPaymentMethods.find(
+        (method) => method.id === kioskPaymentMethodId
+      );
+      if (!kioskPaymentMethod) {
+        throw new ReservationError("Invalid kiosk payment method.");
+      }
     }
 
     return await this.reservationRepository.createReservation(request, rateSnapshot, amountDue);

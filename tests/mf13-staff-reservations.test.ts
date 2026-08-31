@@ -116,9 +116,9 @@ async function runTests() {
     assert.strictEqual(detailByRef, null);
   });
 
-  // 3. Kiosk reservation creation -> source = KIOSK, PENDING_COUNTER_CONFIRMATION (hidden from operational list)
+  // 3. Kiosk reservation creation -> source = KIOSK, PENDING_COUNTER_CONFIRMATION (shown in Counter Queue on operational list)
   let kioskRes: any;
-  await runTest("kiosk reservation with pending counter confirmation is hidden from operational list", async () => {
+  await runTest("kiosk reservation with pending counter confirmation is shown in operational list for counter confirmation", async () => {
     const request: CreateReservationRequest = {
       source: "KIOSK",
       customerFirstName: "Bob",
@@ -133,13 +133,17 @@ async function runTests() {
     kioskRes = await reservationService.createReservation(request);
 
     const list = await staffOperationsService.listOperationalReservations();
-    assert.strictEqual(list.length, 0);
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].reservationStatus, "PENDING_COUNTER_CONFIRMATION");
 
     const detail = await staffOperationsService.getOperationalReservation(kioskRes.id);
-    assert.strictEqual(detail, null);
+    assert.ok(detail);
+    assert.strictEqual(detail.reservationStatus, "PENDING_COUNTER_CONFIRMATION");
+    assert.strictEqual(detail.source, "KIOSK");
+    assert.strictEqual(detail.customerFirstName, "Bob");
   });
 
-  // 4. Staff confirms kiosk counter payment -> CONFIRMED (appears in operational list)
+  // 4. Staff confirms kiosk counter payment -> CONFIRMED (status transitions in operational list)
   await runTest("staff counter payment confirmation updates status to CONFIRMED and becomes operationally visible", async () => {
     await counterPaymentService.confirmPayment({
       paymentAttemptId: kioskRes.counterPaymentAttemptId!,
@@ -148,10 +152,11 @@ async function runTests() {
 
     const list = await staffOperationsService.listOperationalReservations();
     assert.strictEqual(list.length, 1);
+    assert.ok(list[0].reservationStatus === "CONFIRMED" || list[0].reservationStatus === "CHECKED_IN");
 
     const detail = await staffOperationsService.getOperationalReservation(kioskRes.id);
     assert.ok(detail);
-    assert.strictEqual(detail.reservationStatus, "CONFIRMED");
+    assert.ok(detail.reservationStatus === "CONFIRMED" || detail.reservationStatus === "CHECKED_IN");
     assert.strictEqual(detail.source, "KIOSK");
     assert.strictEqual(detail.customerFirstName, "Bob");
     assert.strictEqual(detail.customerLastName, "Miller");

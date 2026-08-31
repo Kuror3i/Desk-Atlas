@@ -14,6 +14,8 @@ function getStatusDisplay(status: ReservationStatus) {
       return { label: 'Checked In', color: 'var(--da-primary)', bg: 'var(--da-info)' };
     case 'COMPLETED':
       return { label: 'Completed', color: 'var(--da-text-secondary)', bg: 'var(--da-canvas)' };
+    case 'PENDING_COUNTER_CONFIRMATION':
+      return { label: 'Counter Queue', color: 'var(--da-brand-dark)', bg: 'var(--da-soft)' };
     default:
       return { label: status, color: 'var(--da-text-secondary)', bg: 'var(--da-canvas)' };
   }
@@ -74,7 +76,7 @@ export function ReservationList() {
                       </span>
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                      <button 
+                      <button
                         onClick={() => router.push(`/manage/reservations/${res.reservationId}`)}
                         style={{ padding: '6px 12px', background: 'var(--da-canvas)', color: 'var(--da-brand-dark)', border: '1px solid var(--da-border)', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
                       >

@@ -15,6 +15,12 @@ export async function GET(request: NextRequest) {
     const workspaceInstanceId = searchParams.get('workspaceInstanceId') ?? '';
     const durationMinutes = Number(searchParams.get('durationMinutes') ?? '');
     const nowIso = searchParams.get('nowIso') ?? undefined;
+    const occupiedNow = searchParams.get('occupiedNow') === 'true' || searchParams.get('scope') === 'occupied_now';
+
+    if (occupiedNow) {
+      const result = await service.listOccupiedInstances({ nowIso });
+      return NextResponse.json(result);
+    }
 
     if (templateId) {
       const result = await service.listTemplateAvailability({

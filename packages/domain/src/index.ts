@@ -131,6 +131,8 @@ export * from './services/guestReservationTrackingService';
 export * from './models/reports';
 export * from './services/reportsRepository';
 export * from './services/reportsService';
+export * from './services/excelReportBuilder';
+export * from './services/chartRenderer';
 export * from './models/dashboard';
 export * from './services/adminDashboardService';
 export * from './services/adminReservationRepository';

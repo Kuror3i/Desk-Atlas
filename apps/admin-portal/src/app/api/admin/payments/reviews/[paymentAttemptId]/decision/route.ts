@@ -7,6 +7,7 @@ import {
   createTransactionalEmailService,
   hashBookingToken,
   ReservationSupabaseRepository,
+  SupabaseSettingsRepository,
 } from "@deskatlas/domain";
 
 export const runtime = "nodejs";
@@ -28,7 +29,7 @@ export async function POST(
         ? await paymentReviewService.getPaymentReviewDetail(paymentAttemptId)
         : null;
     let actorUserId = String(body.actorUserId ?? "").trim();
-    if (!actorUserId) {
+    if (!actorUserId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorUserId)) {
       const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
       if (supabaseUrl && serviceRoleKey) {
@@ -106,6 +107,44 @@ export async function POST(
           });
         }
       }
+    } else if (result.reservationStatus === "NEEDS_MANUAL_RESOLUTION" && reviewDetail) {
+      const trackingBaseUrl =
+        process.env.TRACKING_BASE_URL ??
+        process.env.DESKATLAS_PUBLIC_APP_URL ??
+        request.nextUrl.origin.replace(/\/$/, "");
+      const trackingUrl = buildReservationTrackingUrl(trackingBaseUrl, result.reservationReferenceCode);
+
+      let businessEmail = process.env.BUSINESS_CONTACT_EMAIL || "support@deskatlas.com";
+      let businessName = "DeskAtlas";
+      let businessPhone: string | undefined;
+
+      try {
+        const settingsRepo = new SupabaseSettingsRepository();
+        const settings = await settingsRepo.getBusinessSettings();
+        if (settings.contactEmail) {
+          businessEmail = settings.contactEmail;
+        }
+        if (settings.businessName) {
+          businessName = settings.businessName;
+        }
+        if (settings.contactPhone) {
+          businessPhone = settings.contactPhone;
+        }
+      } catch {
+        // fallback to default/env values
+      }
+
+      const emailService = createTransactionalEmailService();
+      await emailService.sendManualResolutionEmail({
+        to: reviewDetail.customerEmail,
+        customerFirstName: reviewDetail.customerFirstName,
+        customerLastName: reviewDetail.customerLastName,
+        referenceCode: result.reservationReferenceCode,
+        businessName,
+        businessEmail,
+        businessPhone,
+        trackingUrl,
+      });
     }
 
     return NextResponse.json(result);

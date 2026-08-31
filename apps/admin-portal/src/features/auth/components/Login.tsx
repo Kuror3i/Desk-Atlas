@@ -13,7 +13,7 @@ export function Login() {
   const router = useRouter();
 
   useEffect(() => {
-    if (user) {
+    if (user && user.role === 'admin') {
       router.push('/manage');
     }
   }, [user, router]);

@@ -62,12 +62,12 @@ function AdminShell({ children }: { children: React.ReactNode }) {
   }, [user, pathname]);
 
   useEffect(() => {
-    if (!loading && user === null) {
+    if (!loading && (!user || user.role !== 'admin')) {
       router.push('/manage/login');
     }
   }, [user, loading, router]);
 
-  if (loading || user === null) {
+  if (loading || !user || user.role !== 'admin') {
     return null; // loading or redirecting
   }
 

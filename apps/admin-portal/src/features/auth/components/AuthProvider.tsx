@@ -27,7 +27,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.role === 'admin') {
+            return parsed;
+          }
+        }
+        return null;
       } catch (e) {
         return null;
       }
@@ -41,7 +47,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        setUser(JSON.parse(raw));
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.role === 'admin') {
+          setUser(parsed);
+        } else {
+          setUser(null);
+          localStorage.removeItem(STORAGE_KEY);
+        }
       }
     } catch (e) {
       // ignore

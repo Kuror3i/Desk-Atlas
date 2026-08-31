@@ -221,6 +221,38 @@ export class SupabaseAvailabilityRepository implements AvailabilityRepository {
       }));
   }
 
+  async listOccupiedInstances(
+    rangeStartIso: string,
+    rangeEndIso: string
+  ): Promise<string[]> {
+    const [candidateRows, blockRows] = await Promise.all([
+      this.request<Array<{ workspace_instance_id: string }>>(
+        `/reservation_candidates?select=workspace_instance_id,start_at,end_at,is_assigned,reservation:reservations!inner(id,status)&start_at=lt.${encodeURIComponent(
+          rangeEndIso
+        )}&end_at=gt.${encodeURIComponent(
+          rangeStartIso
+        )}&is_assigned=eq.true&reservation.status=in.(CONFIRMED,CHECKED_IN)`
+      ),
+      this.request<Array<{ workspace_instance_id: string | null }>>(
+        `/schedule_blocks?select=workspace_instance_id,start_at,end_at,scope&scope=eq.WORKSPACE&start_at=lt.${encodeURIComponent(
+          rangeEndIso
+        )}&end_at=gt.${encodeURIComponent(
+          rangeStartIso
+        )}`
+      ).catch(() => []),
+    ]);
+
+    const occupied = new Set<string>();
+    for (const r of candidateRows) {
+      if (r.workspace_instance_id) occupied.add(r.workspace_instance_id);
+    }
+    for (const b of blockRows) {
+      if (b.workspace_instance_id) occupied.add(b.workspace_instance_id);
+    }
+
+    return Array.from(occupied);
+  }
+
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const headers = new Headers(options.headers);
     headers.set('apikey', this.serviceRoleKey);

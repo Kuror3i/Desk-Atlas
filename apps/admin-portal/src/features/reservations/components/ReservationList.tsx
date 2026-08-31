@@ -42,9 +42,11 @@ export function ReservationList() {
     }
 
     loadReservations();
+    const interval = setInterval(loadReservations, 15000);
 
     return () => {
       isCancelled = true;
+      clearInterval(interval);
     };
   }, [activeFilter]);
 

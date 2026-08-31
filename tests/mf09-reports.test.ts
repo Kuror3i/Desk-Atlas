@@ -52,7 +52,7 @@ async function runTests() {
   let now = new Date("2026-08-29T12:00:00.000Z");
   const nowProvider = () => now;
 
-  const reservationRepo = new ReservationMemoryRepository();
+  const reservationRepo = new ReservationMemoryRepository(nowProvider);
   const workspaceRepo = new InMemoryWorkspaceRepository();
   const paymentSessionService = createPaymentSessionService(reservationRepo, nowProvider);
   const reservationService = createReservationService(
@@ -300,6 +300,51 @@ async function runTests() {
     assert.ok(result.filename.includes("-today-"));
     const lines = result.content.trim().split("\n");
     assert.strictEqual(lines.length, 7); // header + 6 reservation rows
+  });
+
+  // 7. Executive Excel (.xlsx) Report Generation with Charts & Dashboard
+  await runTest("excel export generates branded workbook with executive dashboard, charts, and data sheets", async () => {
+    const excelResult = await reportsService.exportAdminExcelReport("operations-summary", "today");
+    assert.ok(excelResult.filename.endsWith(".xlsx"));
+    assert.strictEqual(excelResult.contentType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert.ok(Buffer.isBuffer(excelResult.buffer));
+    assert.ok(excelResult.buffer.length > 5000); // contains compressed workbook XML, styles, images
+
+    // Test with ExcelJS reading the generated buffer
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.default.Workbook();
+    await workbook.xlsx.load(excelResult.buffer as any);
+
+    // Verify Worksheets
+    assert.ok(workbook.getWorksheet("Executive Dashboard"), "Should have Executive Dashboard sheet");
+    assert.ok(workbook.getWorksheet("Reservations History"), "Should have Reservations sheet");
+    assert.ok(workbook.getWorksheet("Payment Records"), "Should have Payment Records sheet");
+    assert.ok(workbook.getWorksheet("Workspace Utilization"), "Should have Workspace Utilization sheet");
+
+    const execSheet = workbook.getWorksheet("Executive Dashboard")!;
+    // Verify Executive Banner
+    const bannerCell = execSheet.getCell("B2");
+    assert.ok(bannerCell.value);
+
+    // Verify Embedded Chart Images
+    const images = execSheet.getImages();
+    assert.ok(images.length >= 2, "Executive dashboard should contain embedded chart images (Revenue and Status)");
+
+    // Verify Reservations Sheet
+    const resSheet = workbook.getWorksheet("Reservations History")!;
+    assert.strictEqual(resSheet.getRow(1).getCell(1).value, "Reference Code");
+    assert.ok(resSheet.rowCount >= 7); // header + 6 rows + total
+  });
+
+  // 8. Individual Category Excel Exports
+  await runTest("category excel exports generate styled category sheets with data", async () => {
+    const categories = ["workspace", "reservations", "payment", "checkin", "cancellation"] as const;
+    for (const cat of categories) {
+      const res = await reportsService.exportAdminExcelReport(cat, "today");
+      assert.ok(res.filename.endsWith(".xlsx"));
+      assert.ok(res.filename.includes(cat));
+      assert.ok(res.buffer.length > 2000);
+    }
   });
 
   console.log("All MF-09 tests passed!");

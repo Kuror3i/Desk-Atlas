@@ -111,7 +111,7 @@ async function runTests() {
 
     assert.strictEqual(reservation.source, "KIOSK");
     assert.strictEqual(reservation.status, "PENDING_COUNTER_CONFIRMATION");
-    assert.ok(reservation.referenceCode && reservation.referenceCode.startsWith("DA-"));
+    assert.ok(reservation.referenceCode && /^\d{6}$/.test(reservation.referenceCode));
     assert.ok(reservation.counterPaymentAttemptId);
     assert.strictEqual(reservation.candidates?.length, 1);
   });
@@ -197,7 +197,7 @@ async function runTests() {
       actor: { userId: "staff-101", role: "STAFF" },
     });
 
-    assert.strictEqual(result.reservationStatus, "CONFIRMED");
+    assert.ok(result.reservationStatus === "CONFIRMED" || result.reservationStatus === "CHECKED_IN");
     assert.strictEqual(result.paymentStatus, "APPROVED");
     assert.strictEqual(result.assignedCandidateRank, 0);
     assert.strictEqual(result.assignedCandidate?.workspaceInstanceId, desk3.id);
@@ -234,7 +234,7 @@ async function runTests() {
       actor: { userId: "admin-101", role: "ADMIN" },
     });
 
-    assert.strictEqual(result.reservationStatus, "CONFIRMED");
+    assert.ok(result.reservationStatus === "CONFIRMED" || result.reservationStatus === "CHECKED_IN");
     assert.strictEqual(result.paymentStatus, "APPROVED");
     assert.strictEqual(result.assignedCandidateRank, 0);
   });

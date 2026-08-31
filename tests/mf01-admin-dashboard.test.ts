@@ -54,7 +54,7 @@ async function runTests() {
   let now = new Date("2026-08-29T10:00:00.000Z"); // In UTC: 10:00, In Asia/Manila (UTC+8): 18:00 on 2026-08-29
   const nowProvider = () => now;
 
-  const reservationRepo = new ReservationMemoryRepository();
+  const reservationRepo = new ReservationMemoryRepository(nowProvider);
   const workspaceRepo = new InMemoryWorkspaceRepository();
   const paymentSessionService = createPaymentSessionService(reservationRepo, nowProvider);
   const reservationService = createReservationService(
@@ -193,6 +193,7 @@ async function runTests() {
     "2026-08-24T09:00:00.000Z",
     "2026-08-24T11:00:00.000Z"
   );
+  await approveWebReservation(res4);
   const charlieStored = storedRes.find((r) => r.id === res4.id)!;
   charlieStored.createdAt = "2026-08-24T09:00:00.000Z";
 
@@ -204,6 +205,7 @@ async function runTests() {
     "2026-08-09T09:00:00.000Z",
     "2026-08-09T11:00:00.000Z"
   );
+  await approveWebReservation(res5);
   const davidStored = storedRes.find((r) => r.id === res5.id)!;
   davidStored.createdAt = "2026-08-09T09:00:00.000Z";
 
@@ -213,7 +215,7 @@ async function runTests() {
 
     assert.strictEqual(snapshot.range, "today");
     assert.strictEqual(snapshot.rangeLabel, "Today");
-    assert.strictEqual(snapshot.metrics.reservations.value, 3); // res1, res2, res3 created today
+    assert.strictEqual(snapshot.metrics.reservations.value, 1); // only res1 is confirmed with start time today (res2 pending, res3 cancelled)
     assert.strictEqual(snapshot.metrics.checkedIn.value, 1); // res1 is checked in
     assert.strictEqual(snapshot.metrics.checkedIn.totalCapacity, 4);
     assert.strictEqual(snapshot.metrics.checkedIn.capacityPercentage, 25); // 1 of 4 = 25%
@@ -238,7 +240,7 @@ async function runTests() {
 
     assert.strictEqual(snapshot.range, "7d");
     assert.strictEqual(snapshot.rangeLabel, "Last 7 Days");
-    assert.strictEqual(snapshot.metrics.reservations.value, 4); // res1, res2, res3 + res4 (5 days ago)
+    assert.strictEqual(snapshot.metrics.reservations.value, 2); // res1 (today) + res4 (5 days ago)
     assert.strictEqual(snapshot.metrics.checkedIn.value, 1);
   });
 
@@ -248,7 +250,7 @@ async function runTests() {
 
     assert.strictEqual(snapshot.range, "30d");
     assert.strictEqual(snapshot.rangeLabel, "Last 30 Days");
-    assert.strictEqual(snapshot.metrics.reservations.value, 5); // res1, res2, res3, res4, res5
+    assert.strictEqual(snapshot.metrics.reservations.value, 3); // res1 + res4 + res5
     assert.strictEqual(snapshot.metrics.checkedIn.value, 1);
   });
 

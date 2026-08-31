@@ -6,6 +6,7 @@ import {
   renderPaymentProofReceivedEmail,
   renderPaymentProofRejectedEmail,
   renderReservationTrackingEmail,
+  renderManualResolutionEmail,
   TransactionalEmailService,
 } from '../packages/domain/src/index';
 
@@ -41,7 +42,7 @@ async function runTests() {
     assert.ok(rendered.text.includes('DA-20260901-XYZ'));
   });
 
-  await runTest('renderBookingConfirmationEmail includes workspace, timing, and booking access URL', async () => {
+  await runTest('renderBookingConfirmationEmail includes workspace, timing, booking access URL, and QR code image', async () => {
     const rendered = renderBookingConfirmationEmail({
       to: 'guest@example.com',
       customerFirstName: 'Juan',
@@ -62,8 +63,34 @@ async function runTests() {
     assert.ok(rendered.html.includes('Hot Desk'));
     assert.ok(rendered.html.includes('Level 2'));
     assert.ok(rendered.html.includes('https://deskatlas.app/api/booking/view/opaque-token-abc'));
+    assert.ok(rendered.html.includes('<img'));
+    assert.ok(rendered.html.includes('Digital Access QR Pass'));
     assert.ok(rendered.text.includes('Desk 12'));
     assert.ok(rendered.text.includes('Juan Dela Cruz'));
+    assert.ok(rendered.text.includes('QR Code Image:'));
+  });
+
+  await runTest('renderManualResolutionEmail renders registered business email and resolution instructions', async () => {
+    const rendered = renderManualResolutionEmail({
+      to: 'guest@example.com',
+      customerFirstName: 'Elena',
+      customerLastName: 'Reyes',
+      referenceCode: 'DA-20260901-MAN',
+      businessName: 'DeskAtlas BGC Hub',
+      businessEmail: 'contact@deskatlasbgc.com',
+      businessPhone: '+63 917 123 4567',
+      trackingUrl: 'https://deskatlas.app/track?code=DA-20260901-MAN',
+    });
+
+    assert.ok(rendered.subject.includes('DA-20260901-MAN'));
+    assert.ok(rendered.html.includes('MANUAL RESOLUTION REQUIRED'));
+    assert.ok(rendered.html.includes('contact@deskatlasbgc.com'));
+    assert.ok(rendered.html.includes('DeskAtlas BGC Hub'));
+    assert.ok(rendered.html.includes('+63 917 123 4567'));
+    assert.ok(rendered.html.includes('DA-20260901-MAN'));
+    assert.ok(rendered.html.includes('https://deskatlas.app/track?code=DA-20260901-MAN'));
+    assert.ok(rendered.text.includes('contact@deskatlasbgc.com'));
+    assert.ok(rendered.text.includes('DA-20260901-MAN'));
   });
 
   await runTest('renderPaymentProofReceivedEmail renders under review notice', async () => {
@@ -222,6 +249,17 @@ async function runTests() {
     assert.strictEqual(capturedWebhookUrl, 'https://webhook.internal.test/email');
     assert.strictEqual(capturedWebhookBody.template, 'payment-session');
     assert.strictEqual(capturedWebhookBody.referenceCode, 'DA-WEBHOOK-1');
+
+    await service.sendManualResolutionEmail({
+      to: 'customer@example.com',
+      referenceCode: 'DA-WEBHOOK-MAN',
+      businessEmail: 'support@deskatlas.com',
+      businessName: 'DeskAtlas Hub',
+    });
+
+    assert.strictEqual(capturedWebhookBody.template, 'manual-resolution');
+    assert.strictEqual(capturedWebhookBody.referenceCode, 'DA-WEBHOOK-MAN');
+    assert.strictEqual(capturedWebhookBody.businessEmail, 'support@deskatlas.com');
   });
 
   // 4. Local Development Fallback Mode Tests

@@ -19,6 +19,7 @@ import {
   type AvailableInstanceSummary,
   type AvailableTimeSlot,
   type AvailableDate,
+  zonedDateTimeToUtc,
 } from "@deskatlas/domain";
 import { useRouter } from "next/navigation";
 import { SpotDetailModal } from "./SpotDetailModal";
@@ -326,7 +327,7 @@ export function ReservationPage() {
 
   const elements = published?.elements || [];
 
-  // Parity with Admin & Staff map viewports: auto fit on load/resize and restore saved zoom
+  // Parity with customer viewports: default to 100% zoom (1.0) or restore saved zoom
   useEffect(() => {
     if (!published?.version?.id) return;
     const saved = getSavedMapZoom(published.version.id);
@@ -334,25 +335,8 @@ export function ReservationPage() {
       setZoom(saved);
       return;
     }
-
-    const fit = () => {
-      if (!mapContainerRef.current) return;
-      const rect = mapContainerRef.current.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const computed = computeFitViewZoom(
-        rect.width,
-        rect.height,
-        canvasDimensions.width,
-        canvasDimensions.height
-      );
-      setZoom(computed);
-    };
-
-    fit();
-    const handleResize = () => fit();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [published?.version?.id, canvasDimensions.width, canvasDimensions.height]);
+    setZoom(1);
+  }, [published?.version?.id]);
 
   const handleZoomIn = () => {
     setZoom((z) => {
@@ -371,16 +355,8 @@ export function ReservationPage() {
   };
 
   const handleFitView = () => {
-    if (!mapContainerRef.current) return;
-    const rect = mapContainerRef.current.getBoundingClientRect();
-    const next = computeFitViewZoom(
-      rect.width,
-      rect.height,
-      canvasDimensions.width,
-      canvasDimensions.height
-    );
-    setZoom(next);
-    if (published?.version?.id) saveMapZoom(published.version.id, next);
+    setZoom(1);
+    if (published?.version?.id) saveMapZoom(published.version.id, 1);
   };
 
   const handleFloorChange = (newFloorId: string) => {
@@ -820,8 +796,8 @@ export function ReservationPage() {
       const candidatesPayload = candidates.map((c) => ({
         rank: c.rank,
         workspaceInstanceId: c.workspace.workspaceInstanceId,
-        startAt: `${c.date}T${c.startTime}:00Z`,
-        endAt: `${c.date}T${c.endTime}:00Z`,
+        startAt: zonedDateTimeToUtc(c.date, c.startTime, "Asia/Manila").toISOString(),
+        endAt: zonedDateTimeToUtc(c.date, c.endTime, "Asia/Manila").toISOString(),
       }));
 
       const response = await fetch("/api/reservations", {
@@ -858,7 +834,7 @@ export function ReservationPage() {
 
   return (
     <main className="min-h-screen bg-[var(--da-canvas)] px-3 sm:px-6 md:px-8 py-5 sm:py-6 text-[var(--da-text-primary)] w-full">
-      <div className="mx-auto flex max-w-[1600px] w-full flex-col gap-6">
+      <div className="mx-auto flex max-w-[1800px] w-full flex-col gap-6">
         {/* Top Header & Breadcrumbs */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -2493,7 +2469,7 @@ export function ReservationPage() {
 
                   return (
                     <div
-                      key={cand.workspace.workspaceInstanceId}
+                      key={`${cand.workspace.workspaceInstanceId}-${cand.rank}-${cand.startTime}`}
                       className={`rounded-2xl border p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 transition ${isMain
                         ? "border-[var(--da-primary)] bg-[var(--da-canvas)] shadow-sm"
                         : "border-slate-200 bg-white"

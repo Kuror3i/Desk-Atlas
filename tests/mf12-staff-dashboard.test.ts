@@ -225,14 +225,14 @@ async function runTests() {
 
     assert.strictEqual(snapshot.range, "today");
     assert.strictEqual(snapshot.rangeLabel, "Today");
-    assert.strictEqual(snapshot.metrics.reservations.value, 3); // res1, res2, res3 created today (res4 excluded)
-    assert.strictEqual(snapshot.metrics.checkedIn.value, 1); // res1 is checked in
+    assert.strictEqual(snapshot.metrics.reservations.value, 2); // res1, res3 confirmed with start time today (res2 pending, res4 excluded)
+    assert.strictEqual(snapshot.metrics.checkedIn.value, 2); // res1 & res3 are checked in
     assert.strictEqual(snapshot.metrics.checkedIn.totalCapacity, 4);
-    assert.strictEqual(snapshot.metrics.checkedIn.capacityPercentage, 25); // 1 of 4 = 25%
+    assert.strictEqual(snapshot.metrics.checkedIn.capacityPercentage, 50); // 2 of 4 = 50%
 
     // Workspace overview breakdown
     assert.strictEqual(snapshot.workspaceOverview.totalWorkspaces, 4);
-    assert.strictEqual(snapshot.workspaceOverview.breakdown.find((b) => b.label === "In Use")?.value, "1");
+    assert.strictEqual(snapshot.workspaceOverview.breakdown.find((b) => b.label === "In Use")?.value, "2");
     assert.strictEqual(snapshot.workspaceOverview.breakdown.find((b) => b.label === "Maintenance")?.value, "1");
 
     // Recent activity stream

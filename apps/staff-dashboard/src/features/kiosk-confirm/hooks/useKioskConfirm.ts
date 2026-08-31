@@ -46,7 +46,7 @@ export function useKioskConfirm() {
         body: JSON.stringify({
           code: codeOrId.trim(),
           actor: {
-            userId: user?.name || 'staff-user-id',
+            userId: user?.id,
             role: user?.role?.toUpperCase() || 'STAFF',
           },
         }),

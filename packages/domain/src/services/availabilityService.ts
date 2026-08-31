@@ -12,6 +12,7 @@ import type {
   AvailableTimeSlot,
   ScheduleBlock,
   BlockingReservationWindow,
+  OccupiedInstancesResult,
 } from '../models/availability';
 import { getWorkspaceAvailabilityStatus } from './workspaceService';
 
@@ -202,6 +203,20 @@ export function createAvailabilityService(repository: AvailabilityRepository) {
         availableInstances: allInstances.filter((i) => i.isAvailable),
         allInstances,
       };
+    },
+
+    async listOccupiedInstances(query?: { nowIso?: string }): Promise<OccupiedInstancesResult> {
+      const now = query?.nowIso ? new Date(query.nowIso) : new Date();
+      const fiveMinLater = new Date(now.getTime() + 5 * 60 * 1000);
+      const rangeStartIso = now.toISOString();
+      const rangeEndIso = fiveMinLater.toISOString();
+
+      if (repository.listOccupiedInstances) {
+        const ids = await repository.listOccupiedInstances(rangeStartIso, rangeEndIso);
+        return { occupiedInstanceIds: ids, asOf: rangeStartIso };
+      }
+
+      return { occupiedInstanceIds: [], asOf: rangeStartIso };
     },
   };
 }

@@ -19,6 +19,8 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const exportType = request.nextUrl.searchParams.get("type") as AdminReportExportType | null;
   const rangeParam = request.nextUrl.searchParams.get("range") as AdminReportRange | null;
+  const formatParam = request.nextUrl.searchParams.get("format") as "xlsx" | "csv" | null;
+  const format: "xlsx" | "csv" = formatParam === "csv" ? "csv" : "xlsx";
   const range = rangeParam && validRanges.has(rangeParam) ? rangeParam : undefined;
 
   if (!exportType || !allowedExportTypes.has(exportType)) {
@@ -26,8 +28,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const report = await getAdminReportsService().exportAdminReport(exportType, range);
-    return new NextResponse(report.content, {
+    const report = await getAdminReportsService().exportAdminReport(exportType, range, format);
+    const body = report.buffer ? new Uint8Array(report.buffer) : report.content;
+
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": report.contentType,

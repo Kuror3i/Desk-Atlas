@@ -5,6 +5,7 @@ import {
   CreateReservationRequest,
   ReservationError,
   ReservationSupabaseRepository,
+  zonedDateTimeToUtc,
 } from "@deskatlas/domain";
 
 export const runtime = "nodejs";
@@ -71,13 +72,10 @@ export async function POST(request: NextRequest) {
       reservationRepository
     );
 
-    const activeKioskMethods = await reservationRepository.listActiveKioskPaymentMethods();
-    if (activeKioskMethods.length === 0) {
-      throw new ReservationError("No active kiosk payment methods available.");
-    }
+    const activeKioskMethods = await reservationRepository.listActiveKioskPaymentMethods().catch(() => []);
 
     let paymentMethodId = body.paymentMethodId;
-    if (paymentMethodId) {
+    if (paymentMethodId && activeKioskMethods.length > 0) {
       const match = activeKioskMethods.find(
         (m) =>
           m.id === paymentMethodId ||
@@ -92,7 +90,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!paymentMethodId && body.paymentMethod) {
+    if (!paymentMethodId && body.paymentMethod && activeKioskMethods.length > 0) {
       const pMethod = String(body.paymentMethod).toUpperCase();
       const match = activeKioskMethods.find(
         (m) =>
@@ -107,9 +105,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!paymentMethodId) {
+    if (!paymentMethodId && activeKioskMethods.length > 0) {
       const cashMethod = activeKioskMethods.find((m) => m.methodType === "CASH");
-      paymentMethodId = cashMethod ? cashMethod.id : activeKioskMethods[0].id;
+      paymentMethodId = cashMethod ? cashMethod.id : activeKioskMethods[0]?.id;
     }
 
     let createRequest: CreateReservationRequest;
@@ -130,7 +128,7 @@ export async function POST(request: NextRequest) {
       if (body.startAt) {
         startAt = new Date(body.startAt).toISOString();
       } else if (body.date && body.startTime) {
-        startAt = new Date(`${body.date}T${body.startTime}`).toISOString();
+        startAt = zonedDateTimeToUtc(body.date, body.startTime, 'Asia/Manila').toISOString();
       } else {
         startAt = now.toISOString();
       }

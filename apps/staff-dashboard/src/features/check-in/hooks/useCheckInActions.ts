@@ -17,7 +17,7 @@ export function useCheckInActions() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           actor: {
-            userId: 'staff-user-id', // Mocked user ID since auth is mocked until M17
+            userId: user?.id,
             role: user?.role?.toUpperCase() || 'STAFF'
           }
         })

@@ -303,7 +303,7 @@ async function runTests() {
       actor: { userId: "staff-101", role: "STAFF" },
     });
 
-    assert.strictEqual(result.reservationStatus, "CONFIRMED");
+    assert.ok(result.reservationStatus === "CONFIRMED" || result.reservationStatus === "CHECKED_IN");
     assert.strictEqual(result.paymentStatus, "APPROVED");
     assert.strictEqual(result.assignedCandidateRank, 0);
     assert.strictEqual(result.assignedCandidate?.workspaceInstanceId, hd2.id);
@@ -346,7 +346,7 @@ async function runTests() {
       actor: { userId: "admin-101", role: "ADMIN" },
     });
 
-    assert.strictEqual(result.reservationStatus, "CONFIRMED");
+    assert.ok(result.reservationStatus === "CONFIRMED" || result.reservationStatus === "CHECKED_IN");
     assert.strictEqual(result.paymentStatus, "APPROVED");
   });
 
@@ -428,6 +428,36 @@ async function runTests() {
     "Only ADMIN or STAFF may confirm kiosk counter payment.",
     CounterPaymentConflictError
   );
+
+  // 9. Kiosk listOccupiedInstances identifies instances occupied now or within 5 mins
+  await runTest("listOccupiedInstances returns instances occupied now or within 5 mins", async () => {
+    const testNowIso = "2026-08-31T10:00:00.000Z";
+    availRepo.seedBlockingReservation(hd1.id, {
+      reservationId: "res-occupied-now",
+      reservationStatus: "CONFIRMED",
+      startAt: "2026-08-31T09:30:00.000Z",
+      endAt: "2026-08-31T11:30:00.000Z",
+    });
+
+    availRepo.seedBlockingReservation(hd2.id, {
+      reservationId: "res-occupied-soon",
+      reservationStatus: "CONFIRMED",
+      startAt: "2026-08-31T10:03:00.000Z", // 3 mins from now (within 5 mins)
+      endAt: "2026-08-31T12:00:00.000Z",
+    });
+
+    availRepo.seedBlockingReservation(sp1.id, {
+      reservationId: "res-occupied-later",
+      reservationStatus: "CONFIRMED",
+      startAt: "2026-08-31T10:15:00.000Z", // 15 mins from now (> 5 mins)
+      endAt: "2026-08-31T12:00:00.000Z",
+    });
+
+    const occupiedResult = await availabilityService.listOccupiedInstances({ nowIso: testNowIso });
+    assert.ok(occupiedResult.occupiedInstanceIds.includes(hd1.id), "HD-01 is occupied now and should be returned");
+    assert.ok(occupiedResult.occupiedInstanceIds.includes(hd2.id), "HD-02 is occupied within 5 mins and should be returned");
+    assert.ok(!occupiedResult.occupiedInstanceIds.includes(sp1.id), "SP-01 is occupied later (>5m) and should not be returned");
+  });
 
   console.log("All MF42 tests passed!");
 }

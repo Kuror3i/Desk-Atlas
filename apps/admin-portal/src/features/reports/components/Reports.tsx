@@ -35,10 +35,10 @@ export function Reports() {
     loadData(range);
   }, [range, loadData]);
 
-  const handleDownload = async (exportType: AdminReportExportType) => {
+  const handleDownload = async (exportType: AdminReportExportType, format: 'xlsx' | 'csv' = 'xlsx') => {
     try {
       setExportingType(exportType);
-      await downloadAdminReport(exportType, range);
+      await downloadAdminReport(exportType, range, format);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to export report.');
     } finally {
@@ -62,7 +62,7 @@ export function Reports() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
-            onClick={() => handleDownload('operations-summary')}
+            onClick={() => handleDownload('operations-summary', 'xlsx')}
             disabled={loading || Boolean(exportingType)}
             style={{
               background: 'var(--da-brand-dark)',
@@ -78,7 +78,7 @@ export function Reports() {
               transition: 'opacity 0.15s ease',
             }}
           >
-            {exportingType === 'operations-summary' ? 'Exporting...' : 'Export Summary (CSV)'}
+            {exportingType === 'operations-summary' ? 'Exporting...' : 'Export Summary (Excel)'}
           </button>
           <select
             value={range}
@@ -217,7 +217,7 @@ export function Reports() {
                   <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)' }}>{cat.count} records</div>
                 </div>
                 <button
-                  onClick={() => handleDownload(cat.exportType)}
+                  onClick={() => handleDownload(cat.exportType, 'xlsx')}
                   disabled={exportingType === cat.exportType}
                   style={{
                     background: '#fff',
@@ -231,7 +231,7 @@ export function Reports() {
                     opacity: exportingType === cat.exportType ? 0.6 : 1,
                   }}
                 >
-                  {exportingType === cat.exportType ? '...' : 'CSV'}
+                  {exportingType === cat.exportType ? '...' : 'Excel'}
                 </button>
               </div>
             ))}
