@@ -1,25 +1,10 @@
 "use client";
 
 import { useState } from 'react';
-import type { BookingScanResult } from '@deskatlas/domain';
+import { type BookingScanResult, extractBookingToken } from '@deskatlas/domain';
 
-export function extractBookingToken(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return "";
-  
-  try {
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-      const url = new URL(trimmed);
-      const segments = url.pathname.split("/").filter(Boolean);
-      return segments[segments.length - 1] || "";
-    }
-  } catch {
-    // Fall back to path split if URL parsing fails
-  }
+export { extractBookingToken };
 
-  const segments = trimmed.split("/").filter(Boolean);
-  return segments[segments.length - 1] || trimmed;
-}
 
 export function useBookingLookup() {
   const [result, setResult] = useState<BookingScanResult | null>(null);

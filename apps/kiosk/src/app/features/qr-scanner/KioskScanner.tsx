@@ -2,56 +2,131 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
+import { extractBookingToken, type BookingScanResult } from "@deskatlas/domain";
 
 interface KioskScannerProps {
   onCancel: () => void;
 }
 
+function formatBookingTime(isoString?: string): string {
+  if (!isoString) return "-";
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+  } catch {
+    return isoString;
+  }
+}
+
 export function KioskScanner({ onCancel }: KioskScannerProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [bookingData, setBookingData] = useState<any | null>(null);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const [bookingData, setBookingData] = useState<BookingScanResult | null>(null);
+  const scannerInstanceRef = useRef<Html5Qrcode | null>(null);
+  const isScanningRef = useRef(false);
+
+  const [isScanning, setIsScanning] = useState(true);
+
+  const startScanner = async () => {
+    if (scannerInstanceRef.current?.isScanning) {
+      return;
+    }
+
+    try {
+      // Clear element DOM safely before starting
+      const element = document.getElementById("reader");
+      if (element) {
+        element.innerHTML = "";
+      }
+
+      const html5QrCode = new Html5Qrcode("reader");
+      scannerInstanceRef.current = html5QrCode;
+
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        { 
+          fps: 15,
+          aspectRatio: 1.0,
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const qrboxSize = Math.max(200, Math.floor(minEdge * 0.75));
+            return { width: qrboxSize, height: qrboxSize };
+          },
+        },
+        async (decodedText) => {
+          // Stop scanner immediately on hit
+          try {
+            if (html5QrCode.isScanning) {
+              await html5QrCode.stop();
+            }
+          } catch {
+            // ignore
+          }
+
+          setIsScanning(false);
+          const token = extractBookingToken(decodedText);
+          if (!token) {
+            setError("Invalid booking QR token.");
+            return;
+          }
+
+          setLoading(true);
+          try {
+            const res = await fetch(`/api/booking/${encodeURIComponent(token)}`);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              setError(data.error || "Invalid or expired token");
+            } else {
+              setBookingData(data);
+            }
+          } catch (err) {
+            setError("Network error looking up token");
+          } finally {
+            setLoading(false);
+          }
+        },
+        () => {} // ignore normal read failures (no qr found)
+      );
+
+      isScanningRef.current = true;
+    } catch (err: any) {
+      if (err?.name === "AbortError" || String(err?.message || "").includes("play()")) {
+        return;
+      }
+      console.error("Scanner failed to start", err);
+      setError("Failed to access camera");
+      setIsScanning(false);
+    }
+  };
+
+  const handleRestart = () => {
+    setError(null);
+    setBookingData(null);
+    setLoading(false);
+    setIsScanning(true);
+    setTimeout(() => {
+      startScanner();
+    }, 50);
+  };
 
   useEffect(() => {
-    scannerRef.current = new Html5Qrcode("reader");
-
-    const startScanner = async () => {
-      try {
-        await scannerRef.current?.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 300, height: 300 } },
-          async (decodedText) => {
-            // Stop scanning once we got a hit
-            scannerRef.current?.stop().catch(console.error);
-            setLoading(true);
-            try {
-              const res = await fetch(`/api/booking/${decodedText}`);
-              if (!res.ok) {
-                setError("Invalid or expired token");
-              } else {
-                const data = await res.json();
-                setBookingData(data);
-              }
-            } catch (err) {
-              setError("Network error looking up token");
-            } finally {
-              setLoading(false);
-            }
-          },
-          () => {} // ignore normal read failures (no qr found)
-        );
-      } catch (err) {
-        console.error("Scanner failed to start", err);
-        setError("Failed to access camera");
-      }
-    };
-
     startScanner();
 
     return () => {
-      if (scannerRef.current?.isScanning) {
-        scannerRef.current.stop().catch(console.error);
+      if (scannerInstanceRef.current) {
+        try {
+          if (scannerInstanceRef.current.isScanning) {
+            scannerInstanceRef.current.stop().catch(() => {});
+          }
+        } catch {
+          // ignore
+        }
+        try {
+          scannerInstanceRef.current.clear();
+        } catch {
+          // ignore
+        }
+        scannerInstanceRef.current = null;
       }
     };
   }, []);
@@ -102,23 +177,75 @@ export function KioskScanner({ onCancel }: KioskScannerProps) {
         {loading && <div style={{ fontSize: "24px", color: "#FFFFFF" }}>Looking up booking...</div>}
         
         {error && (
-          <div style={{ background: "#FFEBEE", color: "#C62828", padding: "20px", borderRadius: "12px", fontSize: "24px", marginBottom: "20px" }}>
-            {error}
-            <button onClick={() => { setError(null); window.location.reload(); }} style={{ marginLeft: "20px", padding: "10px 20px" }}>Retry</button>
+          <div style={{ background: "#FFEBEE", color: "#C62828", padding: "24px 32px", borderRadius: "16px", fontSize: "22px", marginBottom: "20px", textAlign: "center", maxWidth: "600px" }}>
+            <div style={{ marginBottom: "16px", fontWeight: 700 }}>{error}</div>
+            <button 
+              onClick={handleRestart} 
+              style={{ background: "#C62828", color: "#FFFFFF", border: "none", borderRadius: "8px", padding: "12px 24px", fontSize: "18px", fontWeight: 700, cursor: "pointer" }}
+            >
+              Retry
+            </button>
           </div>
         )}
 
         {bookingData && (
-          <div style={{ background: "#FFFFFF", borderRadius: "18px", padding: "32px", width: "100%", maxWidth: "600px", marginTop: "24px" }}>
-            <div style={{ fontSize: "28px", fontWeight: 800, color: "#0C3B27", marginBottom: "12px" }}>
-              {bookingData.workspaceName || "Workspace"}
+          <div style={{ background: "#FFFFFF", borderRadius: "18px", padding: "32px", width: "100%", maxWidth: "600px", marginTop: "24px", color: "#1E293B" }}>
+            <div style={{ fontSize: "28px", fontWeight: 800, color: "#0C3B27", marginBottom: "8px" }}>
+              {bookingData.workspaceDisplayName || bookingData.workspaceTemplateName || "Workspace"}
             </div>
-            <div style={{ fontSize: "22px", color: "#65736A", marginBottom: "24px" }}>
-              Status: <strong style={{ color: "#16723A" }}>{bookingData.status}</strong>
+            <div style={{ fontSize: "16px", color: "#64748B", marginBottom: "20px" }}>
+              Reference: <strong style={{ color: "#0C3B27" }}>{bookingData.referenceCode}</strong>
             </div>
-            <button style={{ width: "100%", background: "#0C3B27", color: "#fff", border: "none", padding: "24px", borderRadius: "12px", fontSize: "24px", fontWeight: 800, cursor: "pointer" }}>
-              Check In
-            </button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "24px" }}>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>Guest</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>{bookingData.customerName}</div>
+              </div>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>Spot</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "#0C3B27", marginTop: "2px" }}>{bookingData.workspaceDisplayName || bookingData.workspaceInstanceCode || "Assigned Spot"}</div>
+              </div>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>Start Time</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                  {formatBookingTime(bookingData.bookingStartAt)}
+                </div>
+              </div>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>End Time</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                  {formatBookingTime(bookingData.bookingEndAt)}
+                </div>
+              </div>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>Access State</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: bookingData.accessState === "ACTIVE" ? "#16A34A" : "#D97706", marginTop: "2px" }}>
+                  {bookingData.accessState}
+                </div>
+              </div>
+              <div style={{ background: "#F8FAFC", padding: "12px 16px", borderRadius: "12px" }}>
+                <div style={{ fontSize: "12px", color: "#64748B", fontWeight: 600, textTransform: "uppercase" }}>Check-In</div>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "#0F172A", marginTop: "2px" }}>
+                  {bookingData.checkInState || "CONFIRMED"}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "12px" }}>
+              <button 
+                onClick={handleRestart}
+                style={{ flex: 1, background: "rgba(12, 59, 39, 0.08)", color: "#0C3B27", border: "none", padding: "16px", borderRadius: "12px", fontSize: "18px", fontWeight: 700, cursor: "pointer" }}
+              >
+                Scan Another
+              </button>
+              <button 
+                onClick={onCancel}
+                style={{ flex: 1, background: "#0C3B27", color: "#fff", border: "none", padding: "16px", borderRadius: "12px", fontSize: "18px", fontWeight: 700, cursor: "pointer" }}
+              >
+                Done
+              </button>
+            </div>
           </div>
         )}
 
@@ -126,6 +253,7 @@ export function KioskScanner({ onCancel }: KioskScannerProps) {
         <div 
           id="reader" 
           style={{ 
+            position: "relative",
             width: "min(500px, calc(100vw - 96px), calc(100svh - 260px))", 
             aspectRatio: "1 / 1",
             background: "#000",
@@ -135,7 +263,38 @@ export function KioskScanner({ onCancel }: KioskScannerProps) {
           }}
         ></div>
 
+        <style>{`
+          #reader {
+            position: relative !important;
+            overflow: hidden !important;
+          }
+          #reader video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            border-radius: 24px !important;
+          }
+          #reader canvas {
+            display: none !important;
+          }
+          #reader__scan_region {
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+          }
+          #reader__scan_region video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+          }
+          #reader__dashboard_section {
+            display: none !important;
+          }
+        `}</style>
       </main>
     </div>
   );
 }
+

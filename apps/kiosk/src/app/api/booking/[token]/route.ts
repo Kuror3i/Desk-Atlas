@@ -17,8 +17,9 @@ export async function GET(
 ) {
   try {
     const { token } = await context.params;
+    const decodedToken = decodeURIComponent(token || "").trim();
     const service = createBookingAccessService(new ReservationSupabaseRepository());
-    const result = await service.resolveBookingAccess(token);
+    const result = await service.resolveBookingAccess(decodedToken);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof BookingAccessError) {

@@ -162,9 +162,40 @@ export function hashBookingToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export function extractBookingToken(input: string): string {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return "";
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.token) return extractBookingToken(String(parsed.token));
+      if (parsed.accessUrl) return extractBookingToken(String(parsed.accessUrl));
+      if (parsed.url) return extractBookingToken(String(parsed.url));
+      if (parsed.bookingToken) return extractBookingToken(String(parsed.bookingToken));
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const url = new URL(trimmed);
+      const segments = url.pathname.split("/").filter(Boolean);
+      return segments[segments.length - 1] || "";
+    }
+  } catch {
+    // Fall back to path split if URL parsing fails
+  }
+
+  const segments = trimmed.split("/").filter(Boolean);
+  return segments[segments.length - 1] || trimmed;
+}
+
 export function createBookingAccessService(
   bookingAccessRepository: BookingAccessRepository,
   nowProvider?: () => Date
 ) {
   return new BookingAccessService(bookingAccessRepository, nowProvider);
 }
+
