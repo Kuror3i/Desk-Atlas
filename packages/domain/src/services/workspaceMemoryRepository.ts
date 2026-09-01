@@ -1,22 +1,27 @@
 import type {
+  WorkspaceAuditLogEntry,
+  CreateFloorInput,
   CreateWorkspaceInstanceInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
   Floor,
   UpdateWorkspaceInstanceInput,
   UpdateWorkspaceTemplateInput,
+  WorkspaceStatusImpactReservation,
   WorkspaceCatalog,
   WorkspaceInstanceDetails,
   WorkspaceOperationalStatus,
   WorkspaceRepository,
   WorkspaceTemplate,
 } from '../models/workspace';
-import { WorkspaceConflictError } from './workspaceService';
+import { WorkspaceConflictError, sortWorkspaceInstances } from './workspaceService';
 
 export class InMemoryWorkspaceRepository implements WorkspaceRepository {
   private templates = new Map<string, WorkspaceTemplate>();
   private floors = new Map<string, Floor>();
   private instances = new Map<string, WorkspaceInstanceDetails>();
+  private reservationImpacts = new Map<string, WorkspaceStatusImpactReservation[]>();
+  private auditLogs: WorkspaceAuditLogEntry[] = [];
   private sequence = 1;
 
   constructor() {
@@ -33,8 +38,24 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     return {
       templates: Array.from(this.templates.values()),
       floors: Array.from(this.floors.values()),
-      instances: Array.from(this.instances.values()),
+      instances: sortWorkspaceInstances(Array.from(this.instances.values())),
     };
+  }
+
+  async createFloor(input: CreateFloorInput): Promise<Floor> {
+    const floor: Floor = {
+      id: `floor-${this.sequence++}`,
+      name: input.name,
+      floorNumber: null,
+      displayOrder: this.floors.size,
+      isActive: true,
+    };
+    this.floors.set(floor.id, floor);
+    return floor;
+  }
+
+  async getInstance(id: string): Promise<WorkspaceInstanceDetails> {
+    return this.requireInstance(id);
   }
 
   async createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate> {
@@ -108,6 +129,47 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
       displayName: input.displayName,
       operationalStatus: existing.operationalStatus as WorkspaceOperationalStatus,
     });
+  }
+
+  async listFutureConfirmedReservations(
+    instanceId: string,
+    fromIso: string
+  ): Promise<WorkspaceStatusImpactReservation[]> {
+    const fromTime = Date.parse(fromIso);
+
+    return (this.reservationImpacts.get(instanceId) ?? [])
+      .filter((reservation) => {
+        return (
+          reservation.reservationStatus === 'CONFIRMED' &&
+          reservation.startAt.length > 0 &&
+          Date.parse(reservation.startAt) > fromTime
+        );
+      })
+      .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt));
+  }
+
+  async appendAuditLog(entry: WorkspaceAuditLogEntry): Promise<void> {
+    this.auditLogs.push({
+      ...entry,
+      createdAt: entry.createdAt ?? new Date().toISOString(),
+    });
+  }
+
+  seedFutureConfirmedReservation(
+    instanceId: string,
+    reservation: Omit<WorkspaceStatusImpactReservation, 'candidateId' | 'reservationStatus'>
+  ) {
+    const existing = this.reservationImpacts.get(instanceId) ?? [];
+    existing.push({
+      ...reservation,
+      candidateId: `${instanceId}:${reservation.reservationId}`,
+      reservationStatus: 'CONFIRMED',
+    });
+    this.reservationImpacts.set(instanceId, existing);
+  }
+
+  listAuditLogs(): WorkspaceAuditLogEntry[] {
+    return [...this.auditLogs];
   }
 
   private refreshInstanceTemplate(templateId: string) {

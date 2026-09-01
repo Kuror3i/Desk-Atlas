@@ -36,6 +36,13 @@ export async function publishAdminMapDraft(input: {
   return body.published;
 }
 
+export async function fetchAdminPublishedMap(floorId?: string): Promise<FloorMap | null> {
+  const query = floorId ? `?floorId=${encodeURIComponent(floorId)}` : '';
+  const response = await fetch(`/api/admin/maps/published${query}`, { cache: 'no-store' });
+  const body = await parseJson(response);
+  return body.published ?? null;
+}
+
 async function parseJson(response: Response) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {

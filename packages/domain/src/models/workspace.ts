@@ -86,14 +86,63 @@ export interface CreateWorkspaceInstanceInput {
   operationalStatus?: WorkspaceOperationalStatus;
 }
 
+export interface CreateWorkspaceInstanceFromTemplateInput {
+  templateId: string;
+  floorId: string;
+  operationalStatus?: WorkspaceOperationalStatus;
+}
+
 export interface UpdateWorkspaceInstanceInput {
   displayName?: string;
   operationalStatus?: WorkspaceOperationalStatus;
 }
 
+export type WorkspaceAvailabilityBlockReason = 'TEMPLATE_INACTIVE' | 'OPERATIONAL_STATUS_BLOCKED';
+
+export interface WorkspaceAvailabilityStatus {
+  workspaceInstanceId: string;
+  templateId: string;
+  operationalStatus: WorkspaceOperationalStatus;
+  templateIsActive: boolean;
+  isBookable: boolean;
+  blockingReason: WorkspaceAvailabilityBlockReason | null;
+}
+
+export interface WorkspaceStatusImpactReservation {
+  reservationId: string;
+  reservationReferenceCode: string;
+  candidateId: string;
+  startAt: string;
+  endAt: string;
+  reservationStatus: 'CONFIRMED';
+}
+
+export type WorkspaceAuditActorRole = 'ADMIN' | 'STAFF' | 'SYSTEM';
+
+export interface WorkspaceAuditLogEntry {
+  actorUserId: string | null;
+  actorRole: WorkspaceAuditActorRole;
+  action: string;
+  entityType: string;
+  entityId: string;
+  metadata: Record<string, unknown>;
+  createdAt?: string;
+}
+
+export interface WorkspaceManagedUpdateResult {
+  instance: WorkspaceInstanceDetails;
+  availability: WorkspaceAvailabilityStatus;
+  affectedFutureReservations: WorkspaceStatusImpactReservation[];
+  auditLogged: boolean;
+}
+
 export interface DuplicateWorkspaceInstanceInput {
   instanceCode: string;
   displayName: string;
+}
+
+export interface CreateFloorInput {
+  name: string;
 }
 
 export type AdminWorkspaceType = 'desk' | 'meeting-room' | 'phone-booth';
@@ -116,10 +165,17 @@ export interface AdminWorkspaceSpace {
 
 export interface WorkspaceRepository {
   listCatalog(): Promise<WorkspaceCatalog>;
+  getInstance(id: string): Promise<WorkspaceInstanceDetails>;
+  createFloor(input: CreateFloorInput): Promise<Floor>;
   createTemplate(input: CreateWorkspaceTemplateInput): Promise<WorkspaceTemplate>;
   updateTemplate(id: string, input: UpdateWorkspaceTemplateInput): Promise<WorkspaceTemplate>;
   createInstance(input: CreateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails>;
   updateInstance(id: string, input: UpdateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails>;
   deactivateInstance(id: string): Promise<WorkspaceInstanceDetails>;
   duplicateInstance(id: string, input: DuplicateWorkspaceInstanceInput): Promise<WorkspaceInstanceDetails>;
+  listFutureConfirmedReservations(
+    instanceId: string,
+    fromIso: string
+  ): Promise<WorkspaceStatusImpactReservation[]>;
+  appendAuditLog(entry: WorkspaceAuditLogEntry): Promise<void>;
 }

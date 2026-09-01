@@ -1,10 +1,16 @@
 import type {
   AdminWorkspaceSpace,
   AdminWorkspaceStatus,
+  WorkspaceAuditLogEntry,
   AdminWorkspaceType,
+  CreateFloorInput,
   CreateWorkspaceInstanceInput,
+  CreateWorkspaceInstanceFromTemplateInput,
   CreateWorkspaceTemplateInput,
   DuplicateWorkspaceInstanceInput,
+  WorkspaceAvailabilityStatus,
+  WorkspaceManagedUpdateResult,
+  WorkspaceStatusImpactReservation,
   UpdateWorkspaceInstanceInput,
   UpdateWorkspaceTemplateInput,
   WorkspaceCatalog,
@@ -22,6 +28,11 @@ const VALID_OPERATIONAL_STATUSES: WorkspaceOperationalStatus[] = [
   'INACTIVE',
 ];
 
+const DEFAULT_AUDIT_ACTOR: Pick<WorkspaceAuditLogEntry, 'actorRole' | 'actorUserId'> = {
+  actorRole: 'SYSTEM',
+  actorUserId: null,
+};
+
 export class WorkspaceValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -34,6 +45,12 @@ export class WorkspaceConflictError extends Error {
     super(message);
     this.name = 'WorkspaceConflictError';
   }
+}
+
+export function normalizeCreateFloorInput(input: CreateFloorInput): CreateFloorInput {
+  return {
+    name: requireNonBlank(input.name, 'Floor name'),
+  };
 }
 
 export function normalizeCreateTemplateInput(
@@ -100,6 +117,16 @@ export function normalizeCreateInstanceInput(
   };
 }
 
+export function normalizeCreateInstanceFromTemplateInput(
+  input: CreateWorkspaceInstanceFromTemplateInput
+): CreateWorkspaceInstanceFromTemplateInput {
+  return {
+    templateId: requireNonBlank(input.templateId, 'Template id'),
+    floorId: requireNonBlank(input.floorId, 'Floor id'),
+    operationalStatus: input.operationalStatus ? normalizeOperationalStatus(input.operationalStatus) : undefined,
+  };
+}
+
 export function normalizeUpdateInstanceInput(
   input: UpdateWorkspaceInstanceInput
 ): UpdateWorkspaceInstanceInput {
@@ -124,8 +151,54 @@ export function normalizeDuplicateInstanceInput(
   };
 }
 
+export function compareWorkspaceInstances(
+  a: {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  },
+  b: {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  }
+): number {
+  const nameA = a.displayName ?? a.name ?? '';
+  const nameB = b.displayName ?? b.name ?? '';
+  const nameComp = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+  if (nameComp !== 0) return nameComp;
+
+  const codeA = a.instanceCode ?? '';
+  const codeB = b.instanceCode ?? '';
+  const codeComp = codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: 'base' });
+  if (codeComp !== 0) return codeComp;
+
+  const createdA = a.createdAt ?? '';
+  const createdB = b.createdAt ?? '';
+  const createdComp = createdA.localeCompare(createdB);
+  if (createdComp !== 0) return createdComp;
+
+  return (a.id ?? '').localeCompare(b.id ?? '');
+}
+
+export function sortWorkspaceInstances<
+  T extends {
+    displayName?: string;
+    name?: string;
+    instanceCode?: string;
+    createdAt?: string;
+    id?: string;
+  },
+>(instances: T[]): T[] {
+  return [...instances].sort(compareWorkspaceInstances);
+}
+
 export function mapCatalogToAdminSpaces(catalog: WorkspaceCatalog): AdminWorkspaceSpace[] {
-  return catalog.instances
+  return sortWorkspaceInstances(catalog.instances)
     .filter((instance) => instance.operationalStatus !== 'INACTIVE')
     .map(mapInstanceToAdminSpace);
 }
@@ -163,6 +236,45 @@ export function mapOperationalStatusToAdminStatus(
   return 'occupied';
 }
 
+export function isOperationalStatusBookable(status: WorkspaceOperationalStatus): boolean {
+  return status === 'ACTIVE';
+}
+
+export function getWorkspaceAvailabilityStatus(
+  instance: WorkspaceInstanceDetails
+): WorkspaceAvailabilityStatus {
+  if (!instance.template.isActive) {
+    return {
+      workspaceInstanceId: instance.id,
+      templateId: instance.templateId,
+      operationalStatus: instance.operationalStatus,
+      templateIsActive: false,
+      isBookable: false,
+      blockingReason: 'TEMPLATE_INACTIVE',
+    };
+  }
+
+  if (!isOperationalStatusBookable(instance.operationalStatus)) {
+    return {
+      workspaceInstanceId: instance.id,
+      templateId: instance.templateId,
+      operationalStatus: instance.operationalStatus,
+      templateIsActive: true,
+      isBookable: false,
+      blockingReason: 'OPERATIONAL_STATUS_BLOCKED',
+    };
+  }
+
+  return {
+    workspaceInstanceId: instance.id,
+    templateId: instance.templateId,
+    operationalStatus: instance.operationalStatus,
+    templateIsActive: true,
+    isBookable: true,
+    blockingReason: null,
+  };
+}
+
 export function inferAdminType(template: WorkspaceTemplate): AdminWorkspaceType {
   const name = `${template.name} ${template.defaultShape}`.toLowerCase();
   if (name.includes('meeting') || name.includes('room')) return 'meeting-room';
@@ -173,10 +285,17 @@ export function inferAdminType(template: WorkspaceTemplate): AdminWorkspaceType 
 export function createWorkspaceService(repository: WorkspaceRepository) {
   return {
     async listCatalog() {
-      return repository.listCatalog();
+      const catalog = await repository.listCatalog();
+      return {
+        ...catalog,
+        instances: sortWorkspaceInstances(catalog.instances),
+      };
     },
     async listAdminSpaces() {
       return mapCatalogToAdminSpaces(await repository.listCatalog());
+    },
+    async createFloor(input: CreateFloorInput) {
+      return repository.createFloor(normalizeCreateFloorInput(input));
     },
     async createTemplate(input: CreateWorkspaceTemplateInput) {
       return repository.createTemplate(normalizeCreateTemplateInput(input));
@@ -187,8 +306,71 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
     async createInstance(input: CreateWorkspaceInstanceInput) {
       return repository.createInstance(normalizeCreateInstanceInput(input));
     },
+    async createInstanceFromTemplate(input: CreateWorkspaceInstanceFromTemplateInput) {
+      const normalizedInput = normalizeCreateInstanceFromTemplateInput(input);
+      const catalog = await repository.listCatalog();
+      const template = catalog.templates.find(t => t.id === normalizedInput.templateId);
+      if (!template) {
+        throw new WorkspaceConflictError(`Template not found: ${normalizedInput.templateId}`);
+      }
+
+      const baseName = deriveTemplatePlacementBaseName(template.name);
+      let highestSequence = 0;
+
+      for (const instance of catalog.instances.filter((entry) => entry.templateId === template.id)) {
+        const match = new RegExp(`^${escapeForRegExp(baseName)}\\s+(\\d+)$`, 'i').exec(instance.displayName);
+        if (!match) continue;
+        highestSequence = Math.max(highestSequence, Number.parseInt(match[1], 10));
+      }
+
+      const newName = `${baseName} ${highestSequence + 1}`;
+      
+      return repository.createInstance({
+        templateId: template.id,
+        floorId: normalizedInput.floorId,
+        instanceCode: `V-${(highestSequence + 1).toString().padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`,
+        displayName: newName,
+        operationalStatus: normalizedInput.operationalStatus ?? 'ACTIVE',
+      });
+    },
     async updateInstance(id: string, input: UpdateWorkspaceInstanceInput) {
       return repository.updateInstance(requireNonBlank(id, 'Instance id'), normalizeUpdateInstanceInput(input));
+    },
+    async updateManagedInstance(
+      id: string,
+      input: UpdateWorkspaceInstanceInput,
+      actor: Pick<WorkspaceAuditLogEntry, 'actorRole' | 'actorUserId'> = DEFAULT_AUDIT_ACTOR
+    ): Promise<WorkspaceManagedUpdateResult> {
+      const instanceId = requireNonBlank(id, 'Instance id');
+      const normalizedInput = normalizeUpdateInstanceInput(input);
+      const existing = await repository.getInstance(instanceId);
+      const updated = await repository.updateInstance(instanceId, normalizedInput);
+      const affectedFutureReservations = await getAffectedFutureReservationsIfNeeded(
+        repository,
+        existing,
+        updated
+      );
+
+      const shouldAudit =
+        normalizedInput.displayName !== undefined || normalizedInput.operationalStatus !== undefined;
+
+      if (shouldAudit) {
+        await repository.appendAuditLog({
+          actorRole: actor.actorRole,
+          actorUserId: actor.actorUserId,
+          action: 'workspace.instance.updated',
+          entityType: 'workspace_instance',
+          entityId: instanceId,
+          metadata: buildWorkspaceAuditMetadata(existing, updated, affectedFutureReservations),
+        });
+      }
+
+      return {
+        instance: updated,
+        availability: getWorkspaceAvailabilityStatus(updated),
+        affectedFutureReservations,
+        auditLogged: shouldAudit,
+      };
     },
     async deactivateInstance(id: string) {
       return repository.deactivateInstance(requireNonBlank(id, 'Instance id'));
@@ -199,6 +381,41 @@ export function createWorkspaceService(repository: WorkspaceRepository) {
         normalizeDuplicateInstanceInput(input)
       );
     },
+  };
+}
+
+async function getAffectedFutureReservationsIfNeeded(
+  repository: WorkspaceRepository,
+  existing: WorkspaceInstanceDetails,
+  updated: WorkspaceInstanceDetails
+): Promise<WorkspaceStatusImpactReservation[]> {
+  if (!isNewlyBlockingTransition(existing.operationalStatus, updated.operationalStatus)) {
+    return [];
+  }
+
+  return repository.listFutureConfirmedReservations(updated.id, new Date().toISOString());
+}
+
+function isNewlyBlockingTransition(
+  previousStatus: WorkspaceOperationalStatus,
+  nextStatus: WorkspaceOperationalStatus
+): boolean {
+  return isOperationalStatusBookable(previousStatus) && !isOperationalStatusBookable(nextStatus);
+}
+
+function buildWorkspaceAuditMetadata(
+  existing: WorkspaceInstanceDetails,
+  updated: WorkspaceInstanceDetails,
+  affectedFutureReservations: WorkspaceStatusImpactReservation[]
+): Record<string, unknown> {
+  return {
+    previousDisplayName: existing.displayName,
+    newDisplayName: updated.displayName,
+    previousOperationalStatus: existing.operationalStatus,
+    newOperationalStatus: updated.operationalStatus,
+    availability: getWorkspaceAvailabilityStatus(updated),
+    affectedFutureReservationCount: affectedFutureReservations.length,
+    affectedFutureReservations,
   };
 }
 
@@ -258,4 +475,19 @@ function requirePlainObject(value: Record<string, unknown>): Record<string, unkn
     throw new WorkspaceValidationError('Default style must be an object');
   }
   return value;
+}
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function deriveTemplatePlacementBaseName(templateName: string): string {
+  const words = templateName.trim().split(/\s+/);
+  const trailingGenericWords = new Set(['table', 'desk', 'seat', 'spot', 'workspace']);
+
+  if (words.length > 1 && trailingGenericWords.has(words[words.length - 1].toLowerCase())) {
+    return words.slice(0, -1).join(' ');
+  }
+
+  return templateName.trim();
 }

@@ -58,7 +58,14 @@ export function createMapService(repository: MapRepository) {
         'Canvas height'
       );
       const gridSize = normalizeCanvasSize(input.gridSize ?? DEFAULT_GRID_SIZE, 1, 200, 'Grid size');
-      const elements = await normalizeElements(repository, floor.id, canvasWidth, canvasHeight, input.elements);
+      const elements = await normalizeElements(
+        repository,
+        floor.id,
+        canvasWidth,
+        canvasHeight,
+        gridSize,
+        input.elements
+      );
 
       return repository.saveDraft({
         floorId: floor.id,
@@ -99,6 +106,7 @@ export async function validateMapForPublish(repository: MapRepository, map: Floo
     map.floor.id,
     map.version.canvasWidth,
     map.version.canvasHeight,
+    map.version.gridSize,
     map.elements.map((element) => ({
       id: element.id,
       elementRole: element.elementRole,
@@ -117,11 +125,19 @@ export async function validateMapForPublish(repository: MapRepository, map: Floo
   );
 }
 
+function isKioskMarkerElement(element: MapElementInput): boolean {
+  return (
+    element.elementType?.toUpperCase() === 'KIOSK_YOU_ARE_HERE' ||
+    (Boolean(element.properties) && element.properties?.markerType === 'KIOSK_YOU_ARE_HERE')
+  );
+}
+
 async function normalizeElements(
   repository: MapRepository,
   floorId: string,
   canvasWidth: number,
   canvasHeight: number,
+  gridSize: number,
   elements: MapElementInput[]
 ): Promise<MapElementInput[]> {
   if (!Array.isArray(elements)) {
@@ -133,8 +149,14 @@ async function normalizeElements(
   }
 
   const normalized = elements.map((element, index) =>
-    normalizeElementGeometry(element, index, canvasWidth, canvasHeight)
+    normalizeElementGeometry(element, index, canvasWidth, canvasHeight, gridSize)
   );
+
+  const kioskMarkers = normalized.filter(isKioskMarkerElement);
+  if (kioskMarkers.length > 1) {
+    throw new MapValidationError('A floor map can contain at most one Kiosk You-Are-Here marker');
+  }
+
   const bookable = normalized.filter((element) => element.elementRole === BOOKABLE_ROLE);
 
   if (bookable.length > MAX_BOOKABLE_ELEMENTS_PER_FLOOR) {
@@ -145,7 +167,14 @@ async function normalizeElements(
 
   const seenInstanceIds = new Set<string>();
   for (const element of normalized) {
-    if (element.elementRole === BOOKABLE_ROLE) {
+    if (isKioskMarkerElement(element)) {
+      if (element.workspaceInstanceId) {
+        throw new MapValidationError('Kiosk You-Are-Here marker cannot link to a workspace instance');
+      }
+      if (element.elementRole !== 'INFORMATION') {
+        throw new MapValidationError('Kiosk You-Are-Here marker must have element role INFORMATION');
+      }
+    } else if (element.elementRole === BOOKABLE_ROLE) {
       if (!element.workspaceInstanceId) {
         throw new MapValidationError('Bookable workspace map elements must link to a workspace instance');
       }
@@ -173,25 +202,47 @@ async function normalizeElements(
   return normalized;
 }
 
+function isWallElement(elementType: string, elementRole: MapElementRole): boolean {
+  const type = elementType.toLowerCase();
+  return elementRole === 'STRUCTURE' && (type.includes('wall') || type.includes('thin') || type.includes('glass') || type.includes('separator'));
+}
+
+function isThinWallElement(elementType: string, elementRole: MapElementRole): boolean {
+  const type = elementType.toLowerCase();
+  return elementRole === 'STRUCTURE' && (type.includes('thin') || type.includes('separator'));
+}
+
 function normalizeElementGeometry(
   element: MapElementInput,
   index: number,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  gridSize: number
 ): MapElementInput {
   const label = `Map element ${index + 1}`;
   const elementType = requireNonBlank(element.elementType, `${label} type`);
   const elementRole = normalizeRole(element.elementRole, label);
-  const x = requireFiniteNumber(element.x, `${label} x`);
-  const y = requireFiniteNumber(element.y, `${label} y`);
-  const width = requirePositiveNumber(element.width, `${label} width`);
-  const height = requirePositiveNumber(element.height, `${label} height`);
+  const rawX = requireFiniteNumber(element.x, `${label} x`);
+  const rawY = requireFiniteNumber(element.y, `${label} y`);
+
+  if (rawX < 0 || rawY < 0) {
+    throw new MapValidationError(`${label} coordinates must be non-negative`);
+  }
+
+  const isWall = isWallElement(elementType, elementRole);
+  const isThinWall = isThinWallElement(elementType, elementRole);
+
+  const x = snapToGrid(rawX, gridSize, false);
+  const y = snapToGrid(rawY, gridSize, false);
+  const width = snapToGrid(requirePositiveNumber(element.width, `${label} width`), gridSize, true);
+  const height = isThinWall
+    ? 10
+    : (isWall
+      ? snapToGrid(20, gridSize, true)
+      : snapToGrid(requirePositiveNumber(element.height, `${label} height`), gridSize, true));
   const rotation = normalizeRotation(element.rotation ?? 0, label);
   const zIndex = normalizeInteger(element.zIndex ?? index, `${label} z-index`);
 
-  if (x < 0 || y < 0) {
-    throw new MapValidationError(`${label} coordinates must be non-negative`);
-  }
   if (x + width > canvasWidth || y + height > canvasHeight) {
     throw new MapValidationError(`${label} must stay within the canvas bounds`);
   }
@@ -250,6 +301,14 @@ function requirePositiveNumber(value: number, label: string): number {
     throw new MapValidationError(`${label} must be greater than zero`);
   }
   return normalized;
+}
+
+function snapToGrid(value: number, gridSize: number, enforceMinimumGrid: boolean): number {
+  const snapped = Math.round(value / gridSize) * gridSize;
+  if (enforceMinimumGrid) {
+    return Math.max(gridSize, snapped);
+  }
+  return snapped;
 }
 
 function normalizeInteger(value: number, label: string): number {

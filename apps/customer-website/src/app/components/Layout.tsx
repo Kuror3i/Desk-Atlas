@@ -17,11 +17,11 @@ export function Layout() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-teal-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-semibold">W</span>
+            <Link to="/" className="flex items-center space-x-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--da-brand-accent)] flex-shrink-0">
+                <div className="h-3 w-3 rounded-[3px] bg-[var(--da-brand-dark)]" />
               </div>
-              <span className="font-semibold text-gray-900">DeskAtlas</span>
+              <span className="font-extrabold text-gray-900 text-lg tracking-tight">DeskAtlas</span>
             </Link>
 
             {/* Desktop Navigation */}

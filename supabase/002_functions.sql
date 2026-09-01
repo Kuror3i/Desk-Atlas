@@ -1,0 +1,1771 @@
+-- ============================================================================
+-- DeskAtlas - 002_functions.sql
+-- Application RPC Functions and Stored Procedures
+-- ============================================================================
+
+BEGIN;
+
+-- ----------------------------------------------------------------------------
+-- 1. Map Publishing RPC
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.publish_map_version(
+  p_draft_version_id uuid,
+  p_published_by_user_id uuid
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_draft public.map_versions%ROWTYPE;
+  v_floor public.floors%ROWTYPE;
+  v_actor_role public.staff_role;
+  v_actor_active boolean;
+  v_previous_published_ids uuid[];
+  v_result jsonb;
+BEGIN
+  IF p_published_by_user_id IS NULL THEN
+    RAISE EXCEPTION 'published_by_user_id is required when publishing a map';
+  END IF;
+
+  SELECT role, is_active
+    INTO v_actor_role, v_actor_active
+  FROM public.staff_profiles
+  WHERE user_id = p_published_by_user_id
+  FOR UPDATE;
+
+  IF v_actor_role IS DISTINCT FROM 'ADMIN' OR v_actor_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Only an active ADMIN may publish a map version';
+  END IF;
+
+  SELECT *
+    INTO v_draft
+  FROM public.map_versions
+  WHERE id = p_draft_version_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Map draft version % does not exist', p_draft_version_id;
+  END IF;
+
+  IF v_draft.status <> 'DRAFT' THEN
+    RAISE EXCEPTION 'Only a DRAFT map version can be published';
+  END IF;
+
+  SELECT *
+    INTO v_floor
+  FROM public.floors
+  WHERE id = v_draft.floor_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR v_floor.is_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Draft map version must belong to an active floor';
+  END IF;
+
+  PERFORM 1
+  FROM public.map_elements e
+  WHERE e.map_version_id = v_draft.id
+    AND (
+      e.x < 0
+      OR e.y < 0
+      OR e.width <= 0
+      OR e.height <= 0
+      OR e.x + e.width > v_draft.canvas_width
+      OR e.y + e.height > v_draft.canvas_height
+      OR e.rotation NOT IN (0, 90, 180, 270)
+    )
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Draft contains invalid map geometry';
+  END IF;
+
+  PERFORM 1
+  FROM public.map_elements e
+  LEFT JOIN public.workspace_instances wi
+    ON wi.id = e.workspace_instance_id
+  WHERE e.map_version_id = v_draft.id
+    AND e.element_role = 'WORKSPACE'
+    AND (
+      e.workspace_instance_id IS NULL
+      OR wi.id IS NULL
+      OR wi.floor_id <> v_draft.floor_id
+      OR wi.operational_status = 'INACTIVE'
+    )
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Draft contains an invalid bookable workspace placement';
+  END IF;
+
+  PERFORM e.workspace_instance_id
+  FROM public.map_elements e
+  WHERE e.map_version_id = v_draft.id
+    AND e.workspace_instance_id IS NOT NULL
+  GROUP BY e.workspace_instance_id
+  HAVING count(*) > 1
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Draft contains duplicate workspace-instance placements';
+  END IF;
+
+  PERFORM 1
+  FROM public.map_elements a
+  JOIN public.map_elements b
+    ON a.map_version_id = b.map_version_id
+   AND a.id < b.id
+  WHERE a.map_version_id = v_draft.id
+    AND a.element_role = 'WORKSPACE'
+    AND b.element_role = 'WORKSPACE'
+    AND a.x < b.x + b.width
+    AND a.x + a.width > b.x
+    AND a.y < b.y + b.height
+    AND a.y + a.height > b.y
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Draft contains overlapping bookable workspaces';
+  END IF;
+
+  PERFORM 1
+  FROM public.map_elements workspace_element
+  JOIN public.map_elements wall_element
+    ON workspace_element.map_version_id = wall_element.map_version_id
+   AND workspace_element.id <> wall_element.id
+  WHERE workspace_element.map_version_id = v_draft.id
+    AND workspace_element.element_role = 'WORKSPACE'
+    AND wall_element.element_role = 'STRUCTURE'
+    AND wall_element.element_type IN ('wall', 'divider')
+    AND workspace_element.x < wall_element.x + wall_element.width
+    AND workspace_element.x + workspace_element.width > wall_element.x
+    AND workspace_element.y < wall_element.y + wall_element.height
+    AND workspace_element.y + workspace_element.height > wall_element.y
+  LIMIT 1;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'Draft contains a workspace conflicting with a wall/divider';
+  END IF;
+
+  WITH locked_published AS (
+    SELECT id
+    FROM public.map_versions
+    WHERE floor_id = v_draft.floor_id
+      AND status = 'PUBLISHED'
+    FOR UPDATE
+  )
+  SELECT COALESCE(array_agg(id), ARRAY[]::uuid[])
+    INTO v_previous_published_ids
+  FROM locked_published;
+
+  UPDATE public.map_versions
+  SET status = 'ARCHIVED'
+  WHERE id = ANY(v_previous_published_ids);
+
+  UPDATE public.map_versions
+  SET
+    status = 'PUBLISHED',
+    published_by_user_id = p_published_by_user_id,
+    published_at = now()
+  WHERE id = v_draft.id;
+
+  INSERT INTO public.audit_logs (
+    actor_user_id,
+    actor_role,
+    action,
+    entity_type,
+    entity_id,
+    metadata
+  )
+  VALUES (
+    p_published_by_user_id,
+    'ADMIN',
+    'map_published',
+    'map_version',
+    v_draft.id,
+    jsonb_build_object(
+      'floor_id', v_draft.floor_id,
+      'archived_version_ids', v_previous_published_ids,
+      'element_count', (
+        SELECT count(*)
+        FROM public.map_elements
+        WHERE map_version_id = v_draft.id
+      ),
+      'workspace_instance_count', (
+        SELECT count(*)
+        FROM public.map_elements
+        WHERE map_version_id = v_draft.id
+          AND workspace_instance_id IS NOT NULL
+      )
+    )
+  );
+
+  SELECT jsonb_build_object(
+    'floor', (
+      SELECT to_jsonb(f)
+      FROM public.floors f
+      WHERE f.id = v_draft.floor_id
+    ),
+    'version', (
+      SELECT to_jsonb(v)
+      FROM public.map_versions v
+      WHERE v.id = v_draft.id
+    ),
+    'elements', (
+      SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.z_index, e.id), '[]'::jsonb)
+      FROM public.map_elements e
+      WHERE e.map_version_id = v_draft.id
+    )
+  )
+    INTO v_result
+  ;
+
+  RETURN v_result;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.publish_map_version(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.publish_map_version(uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.publish_map_version(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.publish_map_version(uuid, uuid) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 2. Basic Reservation Creation RPC
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.create_reservation(
+    p_source public.reservation_source,
+    p_first_name text,
+    p_last_name text,
+    p_email text,
+    p_rate_snapshot numeric,
+    p_amount_due numeric,
+    p_candidates jsonb
+)
+RETURNS public.reservations
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+    v_reservation public.reservations;
+    v_status public.reservation_status;
+    v_candidate record;
+BEGIN
+    IF p_source = 'WEB' THEN
+        v_status := 'PENDING_PAYMENT';
+    ELSE
+        v_status := 'PENDING_COUNTER_CONFIRMATION';
+    END IF;
+
+    INSERT INTO public.reservations (
+        source,
+        customer_first_name,
+        customer_last_name,
+        customer_email,
+        status,
+        rate_snapshot,
+        amount_due
+    )
+    VALUES (
+        p_source,
+        p_first_name,
+        p_last_name,
+        p_email,
+        v_status,
+        p_rate_snapshot,
+        p_amount_due
+    )
+    RETURNING * INTO v_reservation;
+
+    FOR v_candidate IN
+        SELECT * FROM jsonb_to_recordset(p_candidates) AS x(
+            rank smallint,
+            "workspaceInstanceId" uuid,
+            "startAt" timestamptz,
+            "endAt" timestamptz
+        )
+    LOOP
+        INSERT INTO public.reservation_candidates (
+            reservation_id,
+            rank,
+            workspace_instance_id,
+            start_at,
+            end_at,
+            is_assigned
+        )
+        VALUES (
+            v_reservation.id,
+            v_candidate.rank,
+            v_candidate."workspaceInstanceId",
+            v_candidate."startAt",
+            v_candidate."endAt",
+            false
+        );
+    END LOOP;
+
+    RETURN v_reservation;
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 3. Web Reservation & Payment Session RPCs
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.create_web_reservation_with_payment_session(
+  p_first_name text,
+  p_last_name text,
+  p_email text,
+  p_rate_snapshot numeric,
+  p_amount_due numeric,
+  p_candidates jsonb,
+  p_token_hash text,
+  p_expires_at timestamptz
+)
+RETURNS TABLE (
+  reservation_id uuid,
+  payment_attempt_id uuid
+)
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_reservation public.reservations;
+  v_candidate record;
+  v_payment_attempt_id uuid;
+BEGIN
+  INSERT INTO public.reservations (
+    source,
+    customer_first_name,
+    customer_last_name,
+    customer_email,
+    status,
+    rate_snapshot,
+    amount_due
+  )
+  VALUES (
+    'WEB',
+    p_first_name,
+    p_last_name,
+    p_email,
+    'PENDING_PAYMENT',
+    p_rate_snapshot,
+    p_amount_due
+  )
+  RETURNING * INTO v_reservation;
+
+  FOR v_candidate IN
+    SELECT * FROM jsonb_to_recordset(p_candidates) AS x(
+      rank smallint,
+      "workspaceInstanceId" uuid,
+      "startAt" timestamptz,
+      "endAt" timestamptz
+    )
+  LOOP
+    INSERT INTO public.reservation_candidates (
+      reservation_id,
+      rank,
+      workspace_instance_id,
+      start_at,
+      end_at,
+      is_assigned
+    )
+    VALUES (
+      v_reservation.id,
+      v_candidate.rank,
+      v_candidate."workspaceInstanceId",
+      v_candidate."startAt",
+      v_candidate."endAt",
+      false
+    );
+  END LOOP;
+
+  INSERT INTO public.payment_attempts (
+    reservation_id,
+    attempt_number,
+    channel,
+    amount,
+    status,
+    token_hash,
+    expires_at
+  )
+  VALUES (
+    v_reservation.id,
+    1,
+    'WEB',
+    p_amount_due,
+    'PENDING',
+    p_token_hash,
+    p_expires_at
+  )
+  RETURNING id INTO v_payment_attempt_id;
+
+  reservation_id := v_reservation.id;
+  payment_attempt_id := v_payment_attempt_id;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.submit_web_payment_proof(
+  p_token_hash text,
+  p_payment_method_id uuid,
+  p_proof_storage_path text,
+  p_proof_submitted_at timestamptz
+)
+RETURNS TABLE (
+  payment_attempt_id uuid,
+  reservation_id uuid,
+  reservation_status public.reservation_status,
+  payment_status public.payment_status,
+  proof_submitted_at timestamptz
+)
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_attempt public.payment_attempts;
+BEGIN
+  SELECT *
+  INTO v_attempt
+  FROM public.payment_attempts
+  WHERE token_hash = p_token_hash
+    AND channel = 'WEB'
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Invalid payment token';
+  END IF;
+
+  IF v_attempt.status <> 'PENDING' OR v_attempt.proof_submitted_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Payment proof already submitted or no longer pending';
+  END IF;
+
+  IF p_proof_submitted_at >= v_attempt.expires_at THEN
+    UPDATE public.payment_attempts
+    SET status = 'EXPIRED'
+    WHERE id = v_attempt.id
+      AND status = 'PENDING';
+
+    UPDATE public.reservations
+    SET status = 'EXPIRED'
+    WHERE id = v_attempt.reservation_id
+      AND status = 'PENDING_PAYMENT';
+
+    RAISE EXCEPTION 'Payment session has expired';
+  END IF;
+
+  UPDATE public.payment_attempts
+  SET
+    payment_method_id = p_payment_method_id,
+    proof_storage_path = p_proof_storage_path,
+    proof_submitted_at = p_proof_submitted_at,
+    status = 'UNDER_REVIEW'
+  WHERE id = v_attempt.id;
+
+  UPDATE public.reservations
+  SET status = 'PAYMENT_UNDER_REVIEW'
+  WHERE id = v_attempt.reservation_id;
+
+  payment_attempt_id := v_attempt.id;
+  reservation_id := v_attempt.reservation_id;
+  reservation_status := 'PAYMENT_UNDER_REVIEW';
+  payment_status := 'UNDER_REVIEW';
+  proof_submitted_at := p_proof_submitted_at;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.expire_web_payment_session(
+  p_token_hash text,
+  p_expired_at timestamptz
+)
+RETURNS TABLE (
+  payment_attempt_id uuid,
+  reservation_id uuid
+)
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_attempt public.payment_attempts;
+BEGIN
+  SELECT *
+  INTO v_attempt
+  FROM public.payment_attempts
+  WHERE token_hash = p_token_hash
+    AND channel = 'WEB'
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  IF v_attempt.status <> 'PENDING'
+     OR v_attempt.proof_submitted_at IS NOT NULL
+     OR p_expired_at < v_attempt.expires_at THEN
+    RETURN;
+  END IF;
+
+  UPDATE public.payment_attempts
+  SET status = 'EXPIRED'
+  WHERE id = v_attempt.id;
+
+  UPDATE public.reservations
+  SET status = 'EXPIRED'
+  WHERE id = v_attempt.reservation_id
+    AND status = 'PENDING_PAYMENT';
+
+  payment_attempt_id := v_attempt.id;
+  reservation_id := v_attempt.reservation_id;
+  RETURN NEXT;
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 4. Online Payment Review & Allocation RPCs (Admin Only)
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.approve_online_payment_and_allocate(
+  p_payment_attempt_id uuid,
+  p_processed_by_user_id uuid,
+  p_processed_at timestamptz
+)
+RETURNS TABLE (
+  payment_attempt_id uuid,
+  reservation_id uuid,
+  reservation_reference_code text,
+  reservation_status public.reservation_status,
+  payment_status public.payment_status,
+  refund_status public.refund_status,
+  assigned_candidate_id uuid,
+  assigned_candidate_rank smallint,
+  assigned_workspace_instance_id uuid,
+  assigned_start_at timestamptz,
+  assigned_end_at timestamptz,
+  rejection_reason text,
+  processed_at timestamptz,
+  processed_by_user_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor_role public.staff_role;
+  v_actor_active boolean;
+  v_attempt public.payment_attempts%ROWTYPE;
+  v_reservation public.reservations%ROWTYPE;
+  v_candidate public.reservation_candidates%ROWTYPE;
+  v_assigned_candidate public.reservation_candidates%ROWTYPE;
+BEGIN
+  IF p_payment_attempt_id IS NULL THEN
+    RAISE EXCEPTION 'payment_attempt_id is required';
+  END IF;
+
+  IF p_processed_by_user_id IS NULL THEN
+    RAISE EXCEPTION 'processed_by_user_id is required';
+  END IF;
+
+  IF p_processed_at IS NULL THEN
+    RAISE EXCEPTION 'processed_at is required';
+  END IF;
+
+  SELECT role, is_active
+    INTO v_actor_role, v_actor_active
+  FROM public.staff_profiles
+  WHERE user_id = p_processed_by_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR v_actor_role <> 'ADMIN' OR v_actor_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Only an active ADMIN may approve online payment proof';
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id
+    AND channel = 'WEB'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Online payment attempt % was not found', p_payment_attempt_id;
+  END IF;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = v_attempt.reservation_id
+  FOR UPDATE;
+
+  IF v_attempt.status = 'APPROVED' THEN
+    SELECT *
+      INTO v_assigned_candidate
+    FROM public.reservation_candidates rc
+    WHERE rc.reservation_id = v_reservation.id
+      AND rc.is_assigned = true
+    LIMIT 1;
+  ELSIF v_attempt.status <> 'UNDER_REVIEW' THEN
+    RAISE EXCEPTION 'Payment attempt % is not in an approvable review state', p_payment_attempt_id;
+  ELSE
+    FOR v_candidate IN
+      SELECT *
+      FROM public.reservation_candidates rc
+      WHERE rc.reservation_id = v_reservation.id
+      ORDER BY rc.rank ASC
+      FOR UPDATE
+    LOOP
+      BEGIN
+        UPDATE public.reservation_candidates
+        SET is_assigned = true
+        WHERE id = v_candidate.id;
+
+        v_assigned_candidate := v_candidate;
+        EXIT;
+      EXCEPTION
+        WHEN exclusion_violation THEN
+          CONTINUE;
+      END;
+    END LOOP;
+
+    UPDATE public.payment_attempts
+    SET
+      status = 'APPROVED',
+      processed_by_user_id = p_processed_by_user_id,
+      processed_at = p_processed_at,
+      rejection_reason = NULL
+    WHERE id = v_attempt.id;
+
+    IF v_assigned_candidate.id IS NOT NULL THEN
+      UPDATE public.reservations
+      SET
+        status = 'CONFIRMED',
+        confirmed_at = COALESCE(confirmed_at, p_processed_at)
+      WHERE id = v_reservation.id;
+    ELSE
+      UPDATE public.reservations
+      SET status = 'NEEDS_MANUAL_RESOLUTION'
+      WHERE id = v_reservation.id;
+    END IF;
+
+    INSERT INTO public.audit_logs (
+      actor_user_id,
+      actor_role,
+      action,
+      entity_type,
+      entity_id,
+      metadata
+    )
+    VALUES (
+      p_processed_by_user_id,
+      'ADMIN',
+      'payment_review_completed',
+      'payment_attempt',
+      v_attempt.id,
+      jsonb_build_object(
+        'decision', 'APPROVE',
+        'reservation_id', v_reservation.id,
+        'assigned_candidate_id', v_assigned_candidate.id,
+        'assigned_candidate_rank', v_assigned_candidate.rank,
+        'assigned_workspace_instance_id', v_assigned_candidate.workspace_instance_id,
+        'manual_resolution_required', v_assigned_candidate.id IS NULL
+      )
+    );
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = v_attempt.reservation_id;
+
+  IF v_assigned_candidate.id IS NULL THEN
+    SELECT *
+      INTO v_assigned_candidate
+    FROM public.reservation_candidates rc
+    WHERE rc.reservation_id = v_reservation.id
+      AND rc.is_assigned = true
+    LIMIT 1;
+  END IF;
+
+  payment_attempt_id := v_attempt.id;
+  reservation_id := v_reservation.id;
+  reservation_reference_code := v_reservation.reference_code;
+  reservation_status := v_reservation.status;
+  payment_status := v_attempt.status;
+  refund_status := v_attempt.refund_status;
+  assigned_candidate_id := v_assigned_candidate.id;
+  assigned_candidate_rank := v_assigned_candidate.rank;
+  assigned_workspace_instance_id := v_assigned_candidate.workspace_instance_id;
+  assigned_start_at := v_assigned_candidate.start_at;
+  assigned_end_at := v_assigned_candidate.end_at;
+  rejection_reason := v_attempt.rejection_reason;
+  processed_at := v_attempt.processed_at;
+  processed_by_user_id := v_attempt.processed_by_user_id;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.reject_online_payment_attempt(
+  p_payment_attempt_id uuid,
+  p_processed_by_user_id uuid,
+  p_processed_at timestamptz,
+  p_rejection_reason text
+)
+RETURNS TABLE (
+  payment_attempt_id uuid,
+  reservation_id uuid,
+  reservation_reference_code text,
+  reservation_status public.reservation_status,
+  payment_status public.payment_status,
+  refund_status public.refund_status,
+  assigned_candidate_id uuid,
+  assigned_candidate_rank smallint,
+  assigned_workspace_instance_id uuid,
+  assigned_start_at timestamptz,
+  assigned_end_at timestamptz,
+  rejection_reason text,
+  processed_at timestamptz,
+  processed_by_user_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor_role public.staff_role;
+  v_actor_active boolean;
+  v_attempt public.payment_attempts%ROWTYPE;
+  v_reservation public.reservations%ROWTYPE;
+BEGIN
+  IF p_payment_attempt_id IS NULL THEN
+    RAISE EXCEPTION 'payment_attempt_id is required';
+  END IF;
+
+  IF p_processed_by_user_id IS NULL THEN
+    RAISE EXCEPTION 'processed_by_user_id is required';
+  END IF;
+
+  IF p_processed_at IS NULL THEN
+    RAISE EXCEPTION 'processed_at is required';
+  END IF;
+
+  IF p_rejection_reason IS NULL OR btrim(p_rejection_reason) = '' THEN
+    RAISE EXCEPTION 'rejection_reason is required';
+  END IF;
+
+  SELECT role, is_active
+    INTO v_actor_role, v_actor_active
+  FROM public.staff_profiles
+  WHERE user_id = p_processed_by_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR v_actor_role <> 'ADMIN' OR v_actor_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Only an active ADMIN may reject online payment proof';
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id
+    AND channel = 'WEB'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Online payment attempt % was not found', p_payment_attempt_id;
+  END IF;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = v_attempt.reservation_id
+  FOR UPDATE;
+
+  IF v_attempt.status <> 'UNDER_REVIEW' AND v_attempt.status <> 'REJECTED' THEN
+    RAISE EXCEPTION 'Payment attempt % is not in a rejectable review state', p_payment_attempt_id;
+  END IF;
+
+  IF v_attempt.status = 'UNDER_REVIEW' THEN
+    UPDATE public.payment_attempts
+    SET
+      status = 'REJECTED',
+      processed_by_user_id = p_processed_by_user_id,
+      processed_at = p_processed_at,
+      rejection_reason = btrim(p_rejection_reason)
+    WHERE id = v_attempt.id;
+
+    INSERT INTO public.audit_logs (
+      actor_user_id,
+      actor_role,
+      action,
+      entity_type,
+      entity_id,
+      metadata
+    )
+    VALUES (
+      p_processed_by_user_id,
+      'ADMIN',
+      'payment_review_completed',
+      'payment_attempt',
+      v_attempt.id,
+      jsonb_build_object(
+        'decision', 'REJECT',
+        'reservation_id', v_reservation.id,
+        'rejection_reason', btrim(p_rejection_reason)
+      )
+    );
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id;
+
+  payment_attempt_id := v_attempt.id;
+  reservation_id := v_reservation.id;
+  reservation_reference_code := v_reservation.reference_code;
+  reservation_status := v_reservation.status;
+  payment_status := v_attempt.status;
+  refund_status := v_attempt.refund_status;
+  assigned_candidate_id := NULL;
+  assigned_candidate_rank := NULL;
+  assigned_workspace_instance_id := NULL;
+  assigned_start_at := NULL;
+  assigned_end_at := NULL;
+  rejection_reason := v_attempt.rejection_reason;
+  processed_at := v_attempt.processed_at;
+  processed_by_user_id := v_attempt.processed_by_user_id;
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.approve_online_payment_and_allocate(uuid, uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.approve_online_payment_and_allocate(uuid, uuid, timestamptz) FROM anon;
+REVOKE ALL ON FUNCTION public.approve_online_payment_and_allocate(uuid, uuid, timestamptz) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.approve_online_payment_and_allocate(uuid, uuid, timestamptz) TO service_role;
+
+REVOKE ALL ON FUNCTION public.reject_online_payment_attempt(uuid, uuid, timestamptz, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reject_online_payment_attempt(uuid, uuid, timestamptz, text) FROM anon;
+REVOKE ALL ON FUNCTION public.reject_online_payment_attempt(uuid, uuid, timestamptz, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.reject_online_payment_attempt(uuid, uuid, timestamptz, text) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 5. Kiosk Counter Payment & Allocation RPCs (Admin & Staff)
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.create_kiosk_reservation_with_counter_payment(
+  p_first_name text,
+  p_last_name text,
+  p_email text,
+  p_rate_snapshot numeric,
+  p_amount_due numeric,
+  p_candidates jsonb,
+  p_payment_method_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+  reservation_id uuid,
+  payment_attempt_id uuid
+)
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_reservation public.reservations;
+  v_candidate record;
+  v_payment_method public.payment_methods%ROWTYPE;
+  v_payment_attempt_id uuid;
+BEGIN
+  IF p_payment_method_id IS NOT NULL THEN
+    SELECT *
+      INTO v_payment_method
+    FROM public.payment_methods
+    WHERE id = p_payment_method_id
+      AND is_active = true
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Kiosk payment method % is not active', p_payment_method_id;
+    END IF;
+  END IF;
+
+  INSERT INTO public.reservations (
+    source,
+    customer_first_name,
+    customer_last_name,
+    customer_email,
+    status,
+    rate_snapshot,
+    amount_due
+  )
+  VALUES (
+    'KIOSK',
+    p_first_name,
+    p_last_name,
+    p_email,
+    'PENDING_COUNTER_CONFIRMATION',
+    p_rate_snapshot,
+    p_amount_due
+  )
+  RETURNING * INTO v_reservation;
+
+  FOR v_candidate IN
+    SELECT * FROM jsonb_to_recordset(p_candidates) AS x(
+      rank smallint,
+      "workspaceInstanceId" uuid,
+      "startAt" timestamptz,
+      "endAt" timestamptz
+    )
+  LOOP
+    INSERT INTO public.reservation_candidates (
+      reservation_id,
+      rank,
+      workspace_instance_id,
+      start_at,
+      end_at,
+      is_assigned
+    )
+    VALUES (
+      v_reservation.id,
+      v_candidate.rank,
+      v_candidate."workspaceInstanceId",
+      v_candidate."startAt",
+      v_candidate."endAt",
+      false
+    );
+  END LOOP;
+
+  INSERT INTO public.payment_attempts (
+    reservation_id,
+    attempt_number,
+    channel,
+    payment_method_id,
+    amount,
+    status
+  )
+  VALUES (
+    v_reservation.id,
+    1,
+    'KIOSK',
+    p_payment_method_id,
+    p_amount_due,
+    'PENDING'
+  )
+  RETURNING id INTO v_payment_attempt_id;
+
+  reservation_id := v_reservation.id;
+  payment_attempt_id := v_payment_attempt_id;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.confirm_kiosk_payment_and_allocate(
+  p_payment_attempt_id uuid,
+  p_processed_by_user_id uuid,
+  p_processed_at timestamptz
+)
+RETURNS TABLE (
+  payment_attempt_id uuid,
+  reservation_id uuid,
+  reservation_reference_code text,
+  reservation_status public.reservation_status,
+  payment_status public.payment_status,
+  refund_status public.refund_status,
+  assigned_candidate_id uuid,
+  assigned_candidate_rank smallint,
+  assigned_workspace_instance_id uuid,
+  assigned_start_at timestamptz,
+  assigned_end_at timestamptz,
+  rejection_reason text,
+  processed_at timestamptz,
+  processed_by_user_id uuid
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor_role public.staff_role;
+  v_actor_active boolean;
+  v_attempt public.payment_attempts%ROWTYPE;
+  v_reservation public.reservations%ROWTYPE;
+  v_candidate public.reservation_candidates%ROWTYPE;
+  v_assigned_candidate public.reservation_candidates%ROWTYPE;
+BEGIN
+  IF p_payment_attempt_id IS NULL THEN
+    RAISE EXCEPTION 'payment_attempt_id is required';
+  END IF;
+
+  IF p_processed_by_user_id IS NULL THEN
+    RAISE EXCEPTION 'processed_by_user_id is required';
+  END IF;
+
+  IF p_processed_at IS NULL THEN
+    RAISE EXCEPTION 'processed_at is required';
+  END IF;
+
+  SELECT role, is_active
+    INTO v_actor_role, v_actor_active
+  FROM public.staff_profiles
+  WHERE user_id = p_processed_by_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR v_actor_role NOT IN ('ADMIN', 'STAFF') OR v_actor_active IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Only an active ADMIN or STAFF may confirm kiosk counter payment';
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id
+    AND channel = 'KIOSK'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Kiosk payment attempt % was not found', p_payment_attempt_id;
+  END IF;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = v_attempt.reservation_id
+  FOR UPDATE;
+
+  IF v_attempt.status = 'APPROVED' THEN
+    SELECT *
+      INTO v_assigned_candidate
+    FROM public.reservation_candidates rc
+    WHERE rc.reservation_id = v_reservation.id
+      AND rc.is_assigned = true
+    LIMIT 1;
+  ELSIF v_attempt.status <> 'PENDING' THEN
+    RAISE EXCEPTION 'Counter payment attempt % is not in a confirmable state', p_payment_attempt_id;
+  ELSE
+    FOR v_candidate IN
+      SELECT *
+      FROM public.reservation_candidates rc
+      WHERE rc.reservation_id = v_reservation.id
+      ORDER BY rc.rank ASC
+      FOR UPDATE
+    LOOP
+      BEGIN
+        UPDATE public.reservation_candidates
+        SET is_assigned = true
+        WHERE id = v_candidate.id;
+
+        v_assigned_candidate := v_candidate;
+        EXIT;
+      EXCEPTION
+        WHEN exclusion_violation THEN
+          CONTINUE;
+      END;
+    END LOOP;
+
+    UPDATE public.payment_attempts
+    SET
+      status = 'APPROVED',
+      processed_by_user_id = p_processed_by_user_id,
+      processed_at = p_processed_at,
+      rejection_reason = NULL
+    WHERE id = v_attempt.id;
+
+    IF v_assigned_candidate.id IS NOT NULL THEN
+      UPDATE public.reservations
+      SET
+        status = 'CHECKED_IN',
+        confirmed_at = COALESCE(confirmed_at, p_processed_at),
+        checked_in_at = COALESCE(checked_in_at, p_processed_at)
+      WHERE id = v_reservation.id;
+    ELSE
+      UPDATE public.reservations
+      SET status = 'NEEDS_MANUAL_RESOLUTION'
+      WHERE id = v_reservation.id;
+    END IF;
+
+    INSERT INTO public.audit_logs (
+      actor_user_id,
+      actor_role,
+      action,
+      entity_type,
+      entity_id,
+      metadata
+    )
+    VALUES (
+      p_processed_by_user_id,
+      v_actor_role::text::public.audit_actor_role,
+      'kiosk_payment_confirmed',
+      'payment_attempt',
+      v_attempt.id,
+      jsonb_build_object(
+        'reservation_id', v_reservation.id,
+        'assigned_candidate_id', v_assigned_candidate.id,
+        'assigned_candidate_rank', v_assigned_candidate.rank,
+        'assigned_workspace_instance_id', v_assigned_candidate.workspace_instance_id,
+        'manual_resolution_required', v_assigned_candidate.id IS NULL
+      )
+    );
+  END IF;
+
+  SELECT *
+    INTO v_attempt
+  FROM public.payment_attempts
+  WHERE id = p_payment_attempt_id;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = v_attempt.reservation_id;
+
+  IF v_assigned_candidate.id IS NULL THEN
+    SELECT *
+      INTO v_assigned_candidate
+    FROM public.reservation_candidates rc
+    WHERE rc.reservation_id = v_reservation.id
+      AND rc.is_assigned = true
+    LIMIT 1;
+  END IF;
+
+  payment_attempt_id := v_attempt.id;
+  reservation_id := v_reservation.id;
+  reservation_reference_code := v_reservation.reference_code;
+  reservation_status := v_reservation.status;
+  payment_status := v_attempt.status;
+  refund_status := v_attempt.refund_status;
+  assigned_candidate_id := v_assigned_candidate.id;
+  assigned_candidate_rank := v_assigned_candidate.rank;
+  assigned_workspace_instance_id := v_assigned_candidate.workspace_instance_id;
+  assigned_start_at := v_assigned_candidate.start_at;
+  assigned_end_at := v_assigned_candidate.end_at;
+  rejection_reason := v_attempt.rejection_reason;
+  processed_at := v_attempt.processed_at;
+  processed_by_user_id := v_attempt.processed_by_user_id;
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.confirm_kiosk_payment_and_allocate(uuid, uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.confirm_kiosk_payment_and_allocate(uuid, uuid, timestamptz) FROM anon;
+REVOKE ALL ON FUNCTION public.confirm_kiosk_payment_and_allocate(uuid, uuid, timestamptz) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.confirm_kiosk_payment_and_allocate(uuid, uuid, timestamptz) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 6. Staff Operational Actions (Check-In & Check-Out)
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.check_in_reservation(
+  p_reservation_id uuid,
+  p_actor_user_id uuid,
+  p_acted_at timestamptz
+)
+RETURNS TABLE (
+  reservation_id uuid,
+  reservation_status public.reservation_status,
+  checked_in_at timestamptz,
+  checked_out_at timestamptz,
+  reentry boolean
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor_role public.staff_role;
+  v_reservation public.reservations%ROWTYPE;
+  v_candidate public.reservation_candidates%ROWTYPE;
+  v_reentry boolean := false;
+BEGIN
+  IF p_reservation_id IS NULL THEN
+    RAISE EXCEPTION 'Reservation ID is required';
+  END IF;
+
+  IF p_actor_user_id IS NULL THEN
+    RAISE EXCEPTION 'Actor user ID is required';
+  END IF;
+
+  IF p_acted_at IS NULL THEN
+    RAISE EXCEPTION 'Action timestamp is required';
+  END IF;
+
+  SELECT role
+    INTO v_actor_role
+  FROM public.staff_profiles
+  WHERE user_id = p_actor_user_id
+    AND is_active = true;
+
+  IF NOT FOUND OR v_actor_role NOT IN ('ADMIN', 'STAFF') THEN
+    RAISE EXCEPTION 'Only active ADMIN or STAFF profiles may check in reservations';
+  END IF;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = p_reservation_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Reservation was not found';
+  END IF;
+
+  SELECT *
+    INTO v_candidate
+  FROM public.reservation_candidates
+  WHERE reservation_id = v_reservation.id
+    AND is_assigned = true
+  LIMIT 1;
+
+  IF v_candidate.id IS NULL THEN
+    RAISE EXCEPTION 'Reservation has no assigned workspace to check in';
+  END IF;
+
+  IF v_reservation.status = 'CHECKED_IN' THEN
+    v_reentry := true;
+  ELSIF v_reservation.status <> 'CONFIRMED' THEN
+    RAISE EXCEPTION 'Reservation is not in a check-in state';
+  END IF;
+
+  IF p_acted_at < v_candidate.start_at OR p_acted_at > v_candidate.end_at THEN
+    RAISE EXCEPTION 'Reservation is not currently active for check-in';
+  END IF;
+
+  UPDATE public.reservations
+  SET
+    status = 'CHECKED_IN',
+    checked_in_at = COALESCE(checked_in_at, p_acted_at),
+    updated_at = p_acted_at
+  WHERE id = v_reservation.id;
+
+  INSERT INTO public.audit_logs (
+    actor_user_id,
+    actor_role,
+    action,
+    entity_type,
+    entity_id,
+    metadata
+  )
+  VALUES (
+    p_actor_user_id,
+    v_actor_role::text::public.audit_actor_role,
+    'reservation_checked_in',
+    'reservation',
+    v_reservation.id,
+    jsonb_build_object(
+      'reentry', v_reentry,
+      'workspace_instance_id', v_candidate.workspace_instance_id,
+      'start_at', v_candidate.start_at,
+      'end_at', v_candidate.end_at
+    )
+  );
+
+  SELECT id, status, checked_in_at, checked_out_at
+    INTO reservation_id, reservation_status, checked_in_at, checked_out_at
+  FROM public.reservations
+  WHERE id = v_reservation.id;
+
+  reentry := v_reentry;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.check_out_reservation(
+  p_reservation_id uuid,
+  p_actor_user_id uuid,
+  p_acted_at timestamptz
+)
+RETURNS TABLE (
+  reservation_id uuid,
+  reservation_status public.reservation_status,
+  checked_in_at timestamptz,
+  checked_out_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_actor_role public.staff_role;
+  v_reservation public.reservations%ROWTYPE;
+BEGIN
+  IF p_reservation_id IS NULL THEN
+    RAISE EXCEPTION 'Reservation ID is required';
+  END IF;
+
+  IF p_actor_user_id IS NULL THEN
+    RAISE EXCEPTION 'Actor user ID is required';
+  END IF;
+
+  IF p_acted_at IS NULL THEN
+    RAISE EXCEPTION 'Action timestamp is required';
+  END IF;
+
+  SELECT role
+    INTO v_actor_role
+  FROM public.staff_profiles
+  WHERE user_id = p_actor_user_id
+    AND is_active = true;
+
+  IF NOT FOUND OR v_actor_role NOT IN ('ADMIN', 'STAFF') THEN
+    RAISE EXCEPTION 'Only active ADMIN or STAFF profiles may check out reservations';
+  END IF;
+
+  SELECT *
+    INTO v_reservation
+  FROM public.reservations
+  WHERE id = p_reservation_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Reservation was not found';
+  END IF;
+
+  IF v_reservation.status = 'COMPLETED' THEN
+    SELECT id, status, checked_in_at, checked_out_at
+      INTO reservation_id, reservation_status, checked_in_at, checked_out_at
+    FROM public.reservations
+    WHERE id = v_reservation.id;
+
+    RETURN NEXT;
+  END IF;
+
+  IF v_reservation.status <> 'CHECKED_IN' THEN
+    RAISE EXCEPTION 'Reservation is not currently checked in';
+  END IF;
+
+  UPDATE public.reservations
+  SET
+    status = 'COMPLETED',
+    checked_out_at = COALESCE(checked_out_at, p_acted_at),
+    updated_at = p_acted_at
+  WHERE id = v_reservation.id;
+
+  INSERT INTO public.audit_logs (
+    actor_user_id,
+    actor_role,
+    action,
+    entity_type,
+    entity_id,
+    metadata
+  )
+  VALUES (
+    p_actor_user_id,
+    v_actor_role::text::public.audit_actor_role,
+    'reservation_checked_out',
+    'reservation',
+    v_reservation.id,
+    jsonb_build_object(
+      'checked_in_at', v_reservation.checked_in_at,
+      'checked_out_at', p_acted_at
+    )
+  );
+
+  SELECT id, status, checked_in_at, checked_out_at
+    INTO reservation_id, reservation_status, checked_in_at, checked_out_at
+  FROM public.reservations
+  WHERE id = v_reservation.id;
+
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.check_in_reservation(uuid, uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.check_in_reservation(uuid, uuid, timestamptz) FROM anon;
+REVOKE ALL ON FUNCTION public.check_in_reservation(uuid, uuid, timestamptz) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.check_in_reservation(uuid, uuid, timestamptz) TO service_role;
+
+REVOKE ALL ON FUNCTION public.check_out_reservation(uuid, uuid, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.check_out_reservation(uuid, uuid, timestamptz) FROM anon;
+REVOKE ALL ON FUNCTION public.check_out_reservation(uuid, uuid, timestamptz) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.check_out_reservation(uuid, uuid, timestamptz) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 7. Staff Authentication Login Verification RPC
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.verify_staff_login(
+  p_email text,
+  p_password text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+  v_user auth.users%ROWTYPE;
+  v_profile public.staff_profiles%ROWTYPE;
+BEGIN
+  SELECT * INTO v_user
+  FROM auth.users
+  WHERE email = lower(btrim(p_email));
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Invalid email or password');
+  END IF;
+
+  IF v_user.encrypted_password IS NULL OR v_user.encrypted_password::text <> extensions.crypt(p_password::text, v_user.encrypted_password::text) THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Invalid email or password');
+  END IF;
+
+  SELECT * INTO v_profile
+  FROM public.staff_profiles
+  WHERE user_id = v_user.id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'No staff profile configured for this user');
+  END IF;
+
+  IF v_profile.is_active IS DISTINCT FROM true THEN
+    RETURN jsonb_build_object('success', false, 'error', 'This account has been deactivated');
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'user', jsonb_build_object(
+      'id', v_user.id,
+      'email', v_user.email,
+      'role', lower(v_profile.role::text),
+      'displayName', v_profile.display_name
+    )
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.verify_staff_login(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.verify_staff_login(text, text) FROM anon;
+REVOKE ALL ON FUNCTION public.verify_staff_login(text, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.verify_staff_login(text, text) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 8. Staff Management RPCs (Admin Only)
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.admin_list_staff(
+  p_actor_user_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+  id uuid,
+  email text,
+  role public.staff_role,
+  display_name text,
+  is_active boolean,
+  created_at timestamptz,
+  updated_at timestamptz,
+  last_sign_in_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+  IF p_actor_user_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.staff_profiles
+      WHERE user_id = p_actor_user_id
+        AND role = 'ADMIN'
+        AND is_active = true
+    ) THEN
+      RAISE EXCEPTION 'Only active ADMIN profiles may view staff management';
+    END IF;
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    p.user_id AS id,
+    COALESCE(u.email, 'unknown@deskatlas.com')::text AS email,
+    p.role,
+    p.display_name,
+    p.is_active,
+    p.created_at,
+    p.updated_at,
+    u.last_sign_in_at
+  FROM public.staff_profiles p
+  LEFT JOIN auth.users u ON u.id = p.user_id
+  ORDER BY p.created_at ASC;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_list_staff(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_list_staff(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.admin_list_staff(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_list_staff(uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.admin_create_staff(
+  p_actor_user_id uuid,
+  p_email text,
+  p_password text,
+  p_display_name text,
+  p_role public.staff_role
+)
+RETURNS TABLE (
+  id uuid,
+  email text,
+  role public.staff_role,
+  display_name text,
+  is_active boolean,
+  created_at timestamptz,
+  updated_at timestamptz,
+  last_sign_in_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+  v_trimmed_email text;
+  v_trimmed_name text;
+  v_new_user_id uuid;
+  v_encrypted_pw text;
+BEGIN
+  IF p_actor_user_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.staff_profiles
+      WHERE user_id = p_actor_user_id
+        AND role = 'ADMIN'
+        AND is_active = true
+    ) THEN
+      RAISE EXCEPTION 'Only active ADMIN profiles may create staff accounts';
+    END IF;
+  END IF;
+
+  v_trimmed_email := lower(btrim(p_email));
+  v_trimmed_name := btrim(p_display_name);
+
+  IF v_trimmed_email = '' OR position('@' in v_trimmed_email) = 0 THEN
+    RAISE EXCEPTION 'A valid email address is required';
+  END IF;
+
+  IF v_trimmed_name = '' THEN
+    RAISE EXCEPTION 'Display name cannot be blank';
+  END IF;
+
+  IF p_password IS NULL OR length(p_password) < 6 THEN
+    RAISE EXCEPTION 'Password must be at least 6 characters long';
+  END IF;
+
+  IF p_role NOT IN ('ADMIN', 'STAFF') THEN
+    RAISE EXCEPTION 'Role must be either ADMIN or STAFF';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM auth.users WHERE email = v_trimmed_email) THEN
+    RAISE EXCEPTION 'A user with email % already exists', v_trimmed_email;
+  END IF;
+
+  v_new_user_id := gen_random_uuid();
+  v_encrypted_pw := extensions.crypt(p_password::text, extensions.gen_salt('bf'::text));
+
+  INSERT INTO auth.users (
+    id,
+    instance_id,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    role,
+    aud,
+    confirmation_token
+  )
+  VALUES (
+    v_new_user_id,
+    '00000000-0000-0000-0000-000000000000',
+    v_trimmed_email,
+    v_encrypted_pw,
+    now(),
+    '{"provider": "email", "providers": ["email"]}'::jsonb,
+    jsonb_build_object('display_name', v_trimmed_name, 'role', p_role::text),
+    now(),
+    now(),
+    'authenticated',
+    'authenticated',
+    encode(gen_random_bytes(32), 'hex')
+  );
+
+  INSERT INTO public.staff_profiles (
+    user_id,
+    role,
+    display_name,
+    is_active,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    v_new_user_id,
+    p_role,
+    v_trimmed_name,
+    true,
+    now(),
+    now()
+  );
+
+  IF p_actor_user_id IS NOT NULL THEN
+    INSERT INTO public.audit_logs (
+      actor_user_id,
+      actor_role,
+      action,
+      entity_type,
+      entity_id,
+      metadata
+    )
+    VALUES (
+      p_actor_user_id,
+      'ADMIN',
+      'CREATE_STAFF_ACCOUNT',
+      'staff_profiles',
+      v_new_user_id,
+      jsonb_build_object(
+        'email', v_trimmed_email,
+        'role', p_role::text,
+        'display_name', v_trimmed_name
+      )
+    );
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    p.user_id AS id,
+    v_trimmed_email AS email,
+    p.role,
+    p.display_name,
+    p.is_active,
+    p.created_at,
+    p.updated_at,
+    NULL::timestamptz AS last_sign_in_at
+  FROM public.staff_profiles p
+  WHERE p.user_id = v_new_user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_create_staff(uuid, text, text, text, public.staff_role) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_create_staff(uuid, text, text, text, public.staff_role) FROM anon;
+REVOKE ALL ON FUNCTION public.admin_create_staff(uuid, text, text, text, public.staff_role) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_create_staff(uuid, text, text, text, public.staff_role) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.admin_update_staff(
+  p_actor_user_id uuid,
+  p_target_user_id uuid,
+  p_display_name text DEFAULT NULL,
+  p_role public.staff_role DEFAULT NULL,
+  p_is_active boolean DEFAULT NULL,
+  p_new_password text DEFAULT NULL
+)
+RETURNS TABLE (
+  id uuid,
+  email text,
+  role public.staff_role,
+  display_name text,
+  is_active boolean,
+  created_at timestamptz,
+  updated_at timestamptz,
+  last_sign_in_at timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+  v_current_profile public.staff_profiles%ROWTYPE;
+  v_action text := 'UPDATE_STAFF_ACCOUNT';
+BEGIN
+  IF p_actor_user_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.staff_profiles
+      WHERE user_id = p_actor_user_id
+        AND role = 'ADMIN'
+        AND is_active = true
+    ) THEN
+      RAISE EXCEPTION 'Only active ADMIN profiles may manage staff accounts';
+    END IF;
+  END IF;
+
+  SELECT * INTO v_current_profile
+  FROM public.staff_profiles
+  WHERE user_id = p_target_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Staff member not found';
+  END IF;
+
+  IF p_display_name IS NOT NULL AND btrim(p_display_name) = '' THEN
+    RAISE EXCEPTION 'Display name cannot be blank';
+  END IF;
+
+  IF p_new_password IS NOT NULL AND btrim(p_new_password) <> '' THEN
+    IF length(p_new_password) < 6 THEN
+      RAISE EXCEPTION 'Password must be at least 6 characters long';
+    END IF;
+    UPDATE auth.users
+    SET
+      encrypted_password = extensions.crypt(p_new_password::text, extensions.gen_salt('bf'::text)),
+      updated_at = now()
+    WHERE id = p_target_user_id;
+  END IF;
+
+  IF p_is_active IS NOT NULL AND p_is_active <> v_current_profile.is_active THEN
+    IF p_is_active = false THEN
+      v_action := 'DEACTIVATE_STAFF_ACCOUNT';
+    ELSE
+      v_action := 'REACTIVATE_STAFF_ACCOUNT';
+    END IF;
+  END IF;
+
+  UPDATE public.staff_profiles
+  SET
+    display_name = COALESCE(btrim(p_display_name), display_name),
+    role = COALESCE(p_role, role),
+    is_active = COALESCE(p_is_active, is_active),
+    updated_at = now()
+  WHERE user_id = p_target_user_id;
+
+  IF p_actor_user_id IS NOT NULL THEN
+    INSERT INTO public.audit_logs (
+      actor_user_id,
+      actor_role,
+      action,
+      entity_type,
+      entity_id,
+      metadata
+    )
+    VALUES (
+      p_actor_user_id,
+      'ADMIN',
+      v_action,
+      'staff_profiles',
+      p_target_user_id,
+      jsonb_build_object(
+        'previous_role', v_current_profile.role::text,
+        'new_role', COALESCE(p_role::text, v_current_profile.role::text),
+        'previous_display_name', v_current_profile.display_name,
+        'new_display_name', COALESCE(btrim(p_display_name), v_current_profile.display_name),
+        'previous_is_active', v_current_profile.is_active,
+        'new_is_active', COALESCE(p_is_active, v_current_profile.is_active),
+        'password_changed', (p_new_password IS NOT NULL AND btrim(p_new_password) <> '')
+      )
+    );
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    p.user_id AS id,
+    COALESCE(u.email, 'unknown@deskatlas.com')::text AS email,
+    p.role,
+    p.display_name,
+    p.is_active,
+    p.created_at,
+    p.updated_at,
+    u.last_sign_in_at
+  FROM public.staff_profiles p
+  LEFT JOIN auth.users u ON u.id = p.user_id
+  WHERE p.user_id = p_target_user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_update_staff(uuid, uuid, text, public.staff_role, boolean, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.admin_update_staff(uuid, uuid, text, public.staff_role, boolean, text) FROM anon;
+REVOKE ALL ON FUNCTION public.admin_update_staff(uuid, uuid, text, public.staff_role, boolean, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_update_staff(uuid, uuid, text, public.staff_role, boolean, text) TO service_role;
+
+COMMIT;
