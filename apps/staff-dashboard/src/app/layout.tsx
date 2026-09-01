@@ -1,16 +1,25 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
-import "../styles/index.css";
+import "@/styles/tokens.css";
+import "@/styles/globals.css";
+import { AuthProvider } from "@/features/auth";
 
 export const metadata: Metadata = {
   title: "DeskAtlas Staff Dashboard",
-  description: "DeskAtlas staff operations dashboard",
+  description: "Management Portal for DeskAtlas Staff",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }

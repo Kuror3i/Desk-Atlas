@@ -1,0 +1,1363 @@
+"use client";
+
+import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '@/features/auth/components/AuthProvider';
+import {
+  computeFitViewZoom,
+  clampMapZoom,
+  getSavedMapZoom,
+  saveMapZoom,
+  DEFAULT_MAP_CANVAS_WIDTH,
+  DEFAULT_MAP_CANVAS_HEIGHT,
+  DEFAULT_MAP_GRID_SIZE,
+} from '@deskatlas/domain';
+
+function getContrastColor(hexColor?: string): string {
+  if (!hexColor || !hexColor.startsWith('#') || hexColor.length < 7) return '#111827';
+  const r = parseInt(hexColor.slice(1, 3), 16);
+  const g = parseInt(hexColor.slice(3, 5), 16);
+  const b = parseInt(hexColor.slice(5, 7), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 150 ? '#111827' : '#ffffff';
+}
+
+function AmenityIcon({ type, name, color }: { type?: string; name?: string; color?: string }) {
+  const norm = (type || name || '').toLowerCase();
+  const iconColor = color || '#1e293b';
+
+  if (norm.includes('restroom') || norm.includes('toilet') || norm.includes('bath') || norm.includes('cr') || norm.includes('washroom')) {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Restroom">
+        <circle cx="8" cy="5" r="2" fill={iconColor} stroke="none" />
+        <path d="M8 8v6M6 10h4M7 14v6M9 14v6" stroke={iconColor} strokeWidth="1.75" />
+        <circle cx="16" cy="5" r="2" fill={iconColor} stroke="none" />
+        <path d="M14 10l2-2 2 2M16 8v3M14 14l1-3h2l1 3M15 14v6M17 14v6" stroke={iconColor} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+
+  if (norm.includes('pantry') || norm.includes('kitchen') || norm.includes('dining') || norm.includes('cafe') || norm.includes('coffee') || norm.includes('snack')) {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Pantry">
+        <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+        <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+        <line x1="6" y1="1" x2="6" y2="4" />
+        <line x1="10" y1="1" x2="10" y2="4" />
+        <line x1="14" y1="1" x2="14" y2="4" />
+      </svg>
+    );
+  }
+
+  if (norm.includes('exit') || norm.includes('emergency')) {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Emergency Exit">
+        <path d="M13 4h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+        <path d="M3 12h11" />
+        <path d="M10 8l4 4-4 4" />
+        <circle cx="6" cy="7" r="1.5" fill={iconColor} stroke="none" />
+        <path d="M6 9v3l-2 2" stroke={iconColor} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+
+  if (norm.includes('door')) {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Doorway">
+        <path d="M18 20V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v14" />
+        <path d="M2 20h20" />
+        <circle cx="14" cy="12" r="1" fill={iconColor} />
+      </svg>
+    );
+  }
+
+  return null;
+}
+
+export function MapEditor() {
+  const { user } = useAuth();
+  const gridOn = true;
+  const snapOn = true;
+  const [showInspector, setShowInspector] = useState(true);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [showFloorModal, setShowFloorModal] = useState(false);
+  const [newFloorName, setNewFloorName] = useState('');
+  const [builderZoom, setBuilderZoom] = useState(1);
+  const [saveState, setSaveState] = useState('Saved');
+  const [selectedObjId, setSelectedObjId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Database entities
+  const [floors, setFloors] = useState<any[]>([]);
+  const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
+  const [applyColorToSimilar, setApplyColorToSimilar] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [instances, setInstances] = useState<any[]>([]);
+  const [builderObjects, setBuilderObjects] = useState<any[]>([]);
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasDimensions, setCanvasDimensions] = useState({
+    width: DEFAULT_MAP_CANVAS_WIDTH,
+    height: DEFAULT_MAP_CANVAS_HEIGHT,
+    gridSize: DEFAULT_MAP_GRID_SIZE,
+  });
+  const [dragState, setDragState] = useState<{ id: string; startX: number; startY: number; startObjX: number; startObjY: number } | null>(null);
+  const [resizeState, setResizeState] = useState<{ id: string; startX: number; startY: number; startObjW: number; startObjH: number; startObjX: number; startObjY: number } | null>(null);
+
+  // Load floors & workspace catalog
+  const loadInitialData = async () => {
+    try {
+      setLoading(true);
+      setErrorMsg(null);
+
+      const [wsRes, floorsRes] = await Promise.all([
+        fetch('/api/admin/workspaces'),
+        fetch('/api/admin/workspaces/floors'),
+      ]);
+
+      const wsData = wsRes.ok ? await wsRes.json() : {};
+      const floorsData = floorsRes.ok ? await floorsRes.json() : {};
+
+      const loadedFloors = floorsData.floors || wsData.floors || [];
+      const loadedTemplates = wsData.templates || [];
+      const loadedInstances = wsData.instances || [];
+
+      setFloors(loadedFloors);
+      setTemplates(loadedTemplates);
+      setInstances(loadedInstances);
+
+      if (loadedFloors.length > 0) {
+        const firstFloorId = loadedFloors[0].id;
+        setSelectedFloorId(firstFloorId);
+        await loadDraftForFloor(firstFloorId, loadedInstances, loadedTemplates);
+      } else {
+        setBuilderObjects([]);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to load initial map data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadDraftForFloor = async (floorId: string, currentInstances = instances, currentTemplates = templates) => {
+    try {
+      setSaveState('Loading map...');
+      // 1. Try draft map first
+      const draftRes = await fetch(`/api/admin/maps/draft?floorId=${encodeURIComponent(floorId)}`);
+      let mapData: any = null;
+      let isDraft = false;
+
+      if (draftRes.ok) {
+        const data = await draftRes.json();
+        const draftObj = data.draft;
+        if (draftObj && Array.isArray(draftObj.elements) && draftObj.elements.length > 0) {
+          mapData = draftObj;
+          isDraft = true;
+        }
+      }
+
+      // 2. If no draft found, fallback to published map
+      if (!mapData) {
+        const pubRes = await fetch(`/api/admin/maps/published?floorId=${encodeURIComponent(floorId)}`);
+        if (pubRes.ok) {
+          const pubData = await pubRes.json();
+          const pubObj = pubData.published;
+          if (pubObj && Array.isArray(pubObj.elements) && pubObj.elements.length > 0) {
+            mapData = pubObj;
+            isDraft = false;
+          }
+        }
+      }
+
+      const canvasW = Number(mapData?.version?.canvasWidth) || DEFAULT_MAP_CANVAS_WIDTH;
+      const canvasH = Number(mapData?.version?.canvasHeight) || DEFAULT_MAP_CANVAS_HEIGHT;
+      const grid = Number(mapData?.version?.gridSize) || DEFAULT_MAP_GRID_SIZE;
+      setCanvasDimensions({ width: canvasW, height: canvasH, gridSize: grid });
+
+      const savedZoom = getSavedMapZoom(floorId);
+      if (savedZoom !== null) {
+        setBuilderZoom(savedZoom);
+      } else if (containerRef.current) {
+        const fitZoom = computeFitViewZoom(
+          containerRef.current.clientWidth,
+          containerRef.current.clientHeight,
+          canvasW,
+          canvasH,
+          0
+        );
+        setBuilderZoom(fitZoom);
+      } else {
+        setBuilderZoom(1);
+      }
+
+      if (!mapData || !mapData.elements || mapData.elements.length === 0) {
+        setBuilderObjects([]);
+        setSelectedObjId(null);
+        setSaveState('Saved');
+        return;
+      }
+
+      const rawElements = mapData.elements || [];
+
+      const mapped = rawElements.map((el: any) => {
+        const inst = el.workspaceInstanceId
+          ? currentInstances.find((i: any) => i.id === el.workspaceInstanceId)
+          : null;
+        const tmpl = inst
+          ? (inst.template || currentTemplates.find((t: any) => t.id === inst.templateId))
+          : currentTemplates.find((t: any) => t.id === el.properties?.templateId || t.name === el.properties?.template);
+
+        const isRestroom = el.elementType?.toLowerCase().includes('restroom') || el.label?.toLowerCase().includes('restroom');
+        const isPantry = el.elementType?.toLowerCase().includes('pantry') || el.label?.toLowerCase().includes('pantry');
+        const isEmergencyExit = el.elementType?.toLowerCase().includes('exit') || el.elementType?.toLowerCase().includes('emergency') || el.label?.toLowerCase().includes('exit') || el.label?.toLowerCase().includes('emergency');
+        const isAmenity = el.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+        const isKioskMarker =
+          el.elementType === 'KIOSK_YOU_ARE_HERE' ||
+          el.elementType === 'kiosk_marker' ||
+          el.elementRole === 'INFORMATION' ||
+          el.properties?.markerType === 'KIOSK_YOU_ARE_HERE' ||
+          el.label?.toLowerCase() === 'you are here';
+
+        let defaultAmenityColor = '#F3F7F4';
+        if (isRestroom) defaultAmenityColor = '#E0F2FE';
+        else if (isPantry) defaultAmenityColor = '#FEF3C7';
+        else if (isEmergencyExit) defaultAmenityColor = '#DCFCE7';
+
+        const color = el.properties?.color || tmpl?.defaultColor || (el.elementRole === 'WORKSPACE' ? '#009689' : (isKioskMarker ? '#DC2626' : (isAmenity ? defaultAmenityColor : '#F3F7F4')));
+        const displayName = el.label || (isKioskMarker ? 'You Are Here' : (inst?.displayName || tmpl?.name || el.elementType));
+
+        const isThinWall = el.elementType?.toLowerCase().includes('thin') || el.elementType?.toLowerCase().includes('separator') || el.label?.toLowerCase().includes('thin') || el.label?.toLowerCase().includes('separator');
+        const isGlass = el.elementType?.toLowerCase().includes('glass') || el.label?.toLowerCase().includes('glass');
+        const isWall = el.elementType?.toLowerCase().includes('wall') || el.label?.toLowerCase().includes('wall') || isThinWall || isGlass;
+        const isRect = el.elementType?.toLowerCase() === 'rectangle' || el.elementType?.toLowerCase() === 'rect' || tmpl?.defaultShape?.toLowerCase() === 'rectangle' || tmpl?.defaultShape?.toLowerCase() === 'rect';
+        const defaultW = isKioskMarker ? 80 : (isRect ? 120 : (isWall ? 160 : (isAmenity ? 100 : 80)));
+        const defaultH = isKioskMarker ? 80 : (isThinWall ? 10 : (isWall ? 20 : (isAmenity ? 80 : 80)));
+
+        let normType = el.elementType;
+        if (isKioskMarker) {
+          normType = 'KIOSK_YOU_ARE_HERE';
+        } else if (!normType || normType === 'generic') {
+          if (isRestroom) normType = 'restroom';
+          else if (isPantry) normType = 'pantry';
+          else if (isEmergencyExit) normType = 'emergency_exit';
+          else if (isThinWall) normType = 'thin_wall';
+          else if (isGlass) normType = 'glass';
+          else if (isWall) normType = 'wall';
+          else normType = tmpl?.defaultShape || 'desk';
+        }
+
+        return {
+          id: el.id,
+          name: displayName,
+          x: Number(el.x) || 0,
+          y: Number(el.y) || 0,
+          w: el.width !== undefined && el.width !== null ? Number(el.width) : defaultW,
+          h: isKioskMarker ? 80 : (isThinWall ? 10 : (isWall ? 20 : (el.height !== undefined && el.height !== null ? Number(el.height) : defaultH))),
+          rotation: el.rotation || 0,
+          bookable: el.elementRole === 'WORKSPACE',
+          template: tmpl?.name || el.properties?.template || null,
+          status: inst?.operationalStatus || (el.elementRole === 'WORKSPACE' ? 'ACTIVE' : null),
+          workspaceInstanceId: el.workspaceInstanceId || null,
+          elementRole: el.elementRole === 'WORKSPACE' ? 'WORKSPACE' : (isKioskMarker ? 'INFORMATION' : (isAmenity ? 'AMENITY' : (el.elementRole || 'STRUCTURE'))),
+          elementType: normType,
+          color,
+        };
+      });
+
+      setBuilderObjects(mapped);
+      if (mapped.length > 0) {
+        setSelectedObjId(mapped[0].id);
+      } else {
+        setSelectedObjId(null);
+      }
+      setSaveState(isDraft ? 'Draft loaded' : 'Published map loaded');
+    } catch (err: any) {
+      setSaveState('Load failed');
+      setErrorMsg(err.message || 'Failed to load map data');
+    }
+  };
+
+  useEffect(() => {
+    loadInitialData();
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || !selectedFloorId) return;
+    const checkAndFit = () => {
+      if (!containerRef.current) return;
+      const savedZoom = getSavedMapZoom(selectedFloorId);
+      if (savedZoom !== null) {
+        setBuilderZoom(savedZoom);
+      } else if (containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+        const fitZoom = computeFitViewZoom(
+          containerRef.current.clientWidth,
+          containerRef.current.clientHeight,
+          canvasDimensions.width,
+          canvasDimensions.height,
+          0
+        );
+        setBuilderZoom(fitZoom);
+      }
+    };
+
+    const timeout = setTimeout(checkAndFit, 60);
+    window.addEventListener('resize', checkAndFit);
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener('resize', checkAndFit);
+    };
+  }, [selectedFloorId, canvasDimensions.width, canvasDimensions.height, loading]);
+
+  const handleFloorChange = async (floorId: string) => {
+    setSelectedFloorId(floorId);
+    await loadDraftForFloor(floorId);
+  };
+
+  const handleCreateFloor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFloorName.trim()) return;
+
+    try {
+      setActionLoading(true);
+      setErrorMsg(null);
+
+      const res = await fetch('/api/admin/workspaces/floors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newFloorName.trim() }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create floor');
+      }
+
+      const createdFloor = await res.json();
+      const updatedFloors = [...floors, createdFloor];
+      setFloors(updatedFloors);
+      setSelectedFloorId(createdFloor.id);
+      setNewFloorName('');
+      setShowFloorModal(false);
+      await loadDraftForFloor(createdFloor.id);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error creating floor');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Add workspace instance / element to canvas
+  const handleAddWorkspace = async (tpl: any) => {
+    if (!selectedFloorId) {
+      setShowFloorModal(true);
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const floor = floors.find(f => f.id === selectedFloorId);
+      const codeSuffix = String(Math.floor(1000 + Math.random() * 9000));
+      const instanceCode = `${tpl.name.substring(0, 3).toUpperCase()}-${codeSuffix}`;
+      const displayName = `${tpl.name} ${builderObjects.filter(o => o.template === tpl.name).length + 1}`;
+
+      // Create instance in DB
+      const res = await fetch('/api/admin/workspaces/instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId: tpl.id,
+          floorId: selectedFloorId,
+          instanceCode,
+          displayName,
+          operationalStatus: 'ACTIVE',
+        }),
+      });
+
+      let instanceId: string | null = null;
+      if (res.ok) {
+        const instData = await res.json();
+        instanceId = instData.instance?.id || instData.id;
+      }
+
+      const shape = tpl.defaultShape || 'desk';
+      const isRect = shape.toLowerCase() === 'rectangle' || shape.toLowerCase() === 'rect';
+      const initialW = isRect ? 120 : 80;
+      const initialH = 80;
+
+      const newObj = {
+        id: 'el-' + Date.now(),
+        name: displayName,
+        x: 100,
+        y: 100,
+        w: initialW,
+        h: initialH,
+        rotation: 0,
+        bookable: true,
+        template: tpl.name,
+        status: 'ACTIVE',
+        workspaceInstanceId: instanceId,
+        elementRole: 'WORKSPACE',
+        elementType: shape,
+        color: tpl.defaultColor || 'rgba(200, 244, 81, 0.4)',
+      };
+
+      setBuilderObjects(prev => [...prev, newObj]);
+      setSelectedObjId(newObj.id);
+      setShowInspector(true);
+      setSaveState('Unsaved changes');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to place workspace');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Add structural element
+  const handleAddStructure = (type: string) => {
+    if (!selectedFloorId) {
+      setShowFloorModal(true);
+      return;
+    }
+
+    const isRestroom = type.toLowerCase().includes('restroom');
+    const isPantry = type.toLowerCase().includes('pantry');
+    const isEmergencyExit = type.toLowerCase().includes('emergency') || type.toLowerCase().includes('exit');
+    const isAmenity = isRestroom || isPantry || isEmergencyExit;
+
+    let role: 'STRUCTURE' | 'AMENITY' = 'STRUCTURE';
+    let defaultColor = '#F3F7F4';
+    let elementType = type.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    let initialW = 100;
+    let initialH = 80;
+
+    if (isAmenity) {
+      role = 'AMENITY';
+      if (isRestroom) {
+        defaultColor = '#E0F2FE';
+        elementType = 'restroom';
+        initialW = 100;
+        initialH = 80;
+      } else if (isPantry) {
+        defaultColor = '#FEF3C7';
+        elementType = 'pantry';
+        initialW = 100;
+        initialH = 80;
+      } else if (isEmergencyExit) {
+        defaultColor = '#DCFCE7';
+        elementType = 'emergency_exit';
+        initialW = 100;
+        initialH = 80;
+      }
+    } else {
+      const isThinWall = type.toLowerCase().includes('thin') || type.toLowerCase().includes('separator');
+      const isGlass = type.toLowerCase().includes('glass');
+      const isWall = type.toLowerCase().includes('wall') || isThinWall || isGlass;
+      const initialThickness = isThinWall ? 10 : (isWall ? 20 : 80);
+      initialW = isWall ? 160 : 100;
+      initialH = initialThickness;
+      defaultColor = isThinWall ? '#94A3B8' : (isGlass ? 'rgba(59, 130, 246, 0.15)' : '#F3F7F4');
+    }
+
+    const newObj = {
+      id: (isAmenity ? 'amn-' : 'str-') + Date.now(),
+      name: type,
+      x: 140,
+      y: 140,
+      w: initialW,
+      h: initialH,
+      rotation: 0,
+      bookable: false,
+      template: null,
+      status: null,
+      workspaceInstanceId: null,
+      elementRole: role,
+      elementType,
+      color: defaultColor,
+    };
+
+    setBuilderObjects(prev => [...prev, newObj]);
+    setSelectedObjId(newObj.id);
+    setShowInspector(true);
+    setSaveState('Unsaved changes');
+  };
+
+  // Add Kiosk "You Are Here" Marker (enforce at most 1 per floor)
+  const handleAddKioskMarker = () => {
+    if (!selectedFloorId) {
+      setShowFloorModal(true);
+      return;
+    }
+
+    const existingIndex = builderObjects.findIndex(
+      (o) => o.elementType === 'KIOSK_YOU_ARE_HERE' || o.elementRole === 'INFORMATION'
+    );
+
+    if (existingIndex >= 0) {
+      const existing = builderObjects[existingIndex];
+      setSelectedObjId(existing.id);
+      setShowInspector(true);
+      setSuccessMsg('Kiosk marker already exists on this floor. Selected existing marker.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+      return;
+    }
+
+    const newObj = {
+      id: 'kiosk-marker-' + Date.now(),
+      name: 'You Are Here',
+      x: 100,
+      y: 100,
+      w: 80,
+      h: 80,
+      rotation: 0,
+      bookable: false,
+      template: null,
+      status: null,
+      workspaceInstanceId: null,
+      elementRole: 'INFORMATION',
+      elementType: 'KIOSK_YOU_ARE_HERE',
+      color: '#DC2626',
+    };
+
+    setBuilderObjects(prev => [...prev, newObj]);
+    setSelectedObjId(newObj.id);
+    setShowInspector(true);
+    setSaveState('Unsaved changes');
+  };
+
+  const handleFitView = () => {
+    if (!containerRef.current) {
+      setBuilderZoom(1);
+      return;
+    }
+    const fitZoom = computeFitViewZoom(
+      containerRef.current.clientWidth,
+      containerRef.current.clientHeight,
+      canvasDimensions.width,
+      canvasDimensions.height,
+      0
+    );
+    setBuilderZoom(fitZoom);
+    if (selectedFloorId) {
+      saveMapZoom(selectedFloorId, fitZoom);
+    }
+  };
+
+  const handleZoomIn = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z + 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
+  };
+
+  const handleZoomOut = () => {
+    setBuilderZoom((z) => {
+      const next = clampMapZoom(Number((z - 0.1).toFixed(2)));
+      if (selectedFloorId) saveMapZoom(selectedFloorId, next);
+      return next;
+    });
+  };
+
+  // Drag and Resize handlers
+  useEffect(() => {
+    if (dragState) {
+      const handlePointerMove = (e: PointerEvent) => {
+        const dx = (e.clientX - dragState.startX) / builderZoom;
+        const dy = (e.clientY - dragState.startY) / builderZoom;
+
+        let newX = dragState.startObjX + dx;
+        let newY = dragState.startObjY + dy;
+
+        if (snapOn) {
+          newX = Math.round(newX / 20) * 20;
+          newY = Math.round(newY / 20) * 20;
+        }
+
+        const obj = builderObjects.find(o => o.id === dragState.id);
+        const objW = obj?.w || 0;
+        const objH = obj?.h || 0;
+
+        const canvasW = canvasDimensions.width;
+        const canvasH = canvasDimensions.height;
+
+        newX = Math.max(0, Math.min(newX, canvasW - objW));
+        newY = Math.max(0, Math.min(newY, canvasH - objH));
+
+        setBuilderObjects(prev => prev.map(o => (o.id === dragState.id ? { ...o, x: newX, y: newY } : o)));
+        setSaveState('Unsaved changes');
+      };
+
+      const handlePointerUp = () => setDragState(null);
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      return () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+      };
+    } else if (resizeState) {
+      const handlePointerMove = (e: PointerEvent) => {
+        const dx = (e.clientX - resizeState.startX) / builderZoom;
+        const dy = (e.clientY - resizeState.startY) / builderZoom;
+
+        const obj = builderObjects.find(o => o.id === resizeState.id);
+        const isThinWall = obj && (
+          obj.elementType?.toLowerCase().includes('thin') ||
+          obj.elementType?.toLowerCase().includes('separator') ||
+          obj.name?.toLowerCase().includes('thin') ||
+          obj.name?.toLowerCase().includes('separator')
+        );
+        const isGlass = obj && (
+          obj.elementType?.toLowerCase().includes('glass') ||
+          obj.name?.toLowerCase().includes('glass')
+        );
+        const isWall = obj && (
+          obj.elementType?.toLowerCase().includes('wall') ||
+          obj.name?.toLowerCase().includes('wall') ||
+          isThinWall ||
+          isGlass
+        );
+        const fixedThickness = isThinWall ? 10 : 20;
+
+        if (isWall && obj) {
+          const rot = ((obj.rotation || 0) % 360 + 360) % 360;
+          let dLength = dx;
+          if (rot === 90) {
+            dLength = dy;
+          } else if (rot === 180) {
+            dLength = -dx;
+          } else if (rot === 270) {
+            dLength = -dy;
+          }
+
+          let newW = Math.max(20, resizeState.startObjW + dLength);
+          if (snapOn) {
+            newW = Math.round(newW / 20) * 20;
+          }
+
+          const dw = newW - resizeState.startObjW;
+          let newX = resizeState.startObjX;
+          let newY = resizeState.startObjY;
+
+          if (rot === 90) {
+            // Keep visual left static and visual top static, extend downwards
+            newX = resizeState.startObjX - dw / 2;
+            newY = resizeState.startObjY + dw / 2;
+          } else if (rot === 270) {
+            // Keep visual left static and visual bottom static, extend upwards
+            newX = resizeState.startObjX - dw / 2;
+            newY = resizeState.startObjY - dw / 2;
+          } else if (rot === 180) {
+            // Keep visual top static and visual right static, extend leftwards
+            newX = resizeState.startObjX - dw;
+            newY = resizeState.startObjY;
+          } else {
+            // rot === 0: default horizontal, extends rightwards
+            newX = resizeState.startObjX;
+            newY = resizeState.startObjY;
+          }
+
+          setBuilderObjects(prev => prev.map(o => (o.id === resizeState.id ? { ...o, x: newX, y: newY, w: newW, h: fixedThickness } : o)));
+          setSaveState('Unsaved changes');
+        } else {
+          let newW = Math.max(20, resizeState.startObjW + dx);
+          let newH = Math.max(20, resizeState.startObjH + dy);
+
+          if (snapOn) {
+            newW = Math.round(newW / 20) * 20;
+            newH = Math.round(newH / 20) * 20;
+          }
+
+          const objX = obj?.x || 0;
+          const objY = obj?.y || 0;
+
+          const canvasW = canvasDimensions.width;
+          const canvasH = canvasDimensions.height;
+
+          newW = Math.min(newW, canvasW - objX);
+          newH = Math.min(newH, canvasH - objY);
+
+          setBuilderObjects(prev => prev.map(o => (o.id === resizeState.id ? { ...o, w: newW, h: newH } : o)));
+          setSaveState('Unsaved changes');
+        }
+      };
+
+      const handlePointerUp = () => setResizeState(null);
+
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+      return () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+      };
+    }
+  }, [dragState, resizeState, builderZoom, snapOn, builderObjects, canvasDimensions]);
+
+  // Save draft
+  const handleSaveDraft = async () => {
+    if (!selectedFloorId) return;
+
+    try {
+      setSaveState('Saving draft...');
+      setErrorMsg(null);
+
+      const elementsPayload = builderObjects.map((obj, index) => {
+        const isThinWall = obj.elementType?.toLowerCase().includes('thin') || obj.elementType?.toLowerCase().includes('separator') || obj.name?.toLowerCase().includes('thin') || obj.name?.toLowerCase().includes('separator');
+        const isGlass = obj.elementType?.toLowerCase().includes('glass') || obj.name?.toLowerCase().includes('glass');
+        const isWall = obj.elementType?.toLowerCase().includes('wall') || obj.name?.toLowerCase().includes('wall') || isThinWall || isGlass;
+        const isRestroom = obj.elementType?.toLowerCase().includes('restroom') || obj.name?.toLowerCase().includes('restroom');
+        const isPantry = obj.elementType?.toLowerCase().includes('pantry') || obj.name?.toLowerCase().includes('pantry');
+        const isEmergencyExit = obj.elementType?.toLowerCase().includes('exit') || obj.elementType?.toLowerCase().includes('emergency') || obj.name?.toLowerCase().includes('exit') || obj.name?.toLowerCase().includes('emergency');
+        const isAmenity = obj.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+        const isKioskMarker =
+          obj.elementType === 'KIOSK_YOU_ARE_HERE' ||
+          obj.elementRole === 'INFORMATION' ||
+          obj.name?.toLowerCase() === 'you are here';
+        const fixedThickness = isThinWall ? 10 : 20;
+
+        let role: 'WORKSPACE' | 'STRUCTURE' | 'AMENITY' | 'INFORMATION' = obj.bookable
+          ? 'WORKSPACE'
+          : (isKioskMarker ? 'INFORMATION' : (isAmenity ? 'AMENITY' : (obj.elementRole || 'STRUCTURE')));
+        let normType = obj.elementType;
+        if (isKioskMarker) {
+          normType = 'KIOSK_YOU_ARE_HERE';
+        } else if (!normType || normType === 'generic') {
+          if (obj.bookable) normType = 'desk';
+          else if (isRestroom) normType = 'restroom';
+          else if (isPantry) normType = 'pantry';
+          else if (isEmergencyExit) normType = 'emergency_exit';
+          else if (isThinWall) normType = 'thin_wall';
+          else if (isGlass) normType = 'glass';
+          else if (isWall) normType = 'wall';
+          else normType = 'generic';
+        }
+
+        return {
+          elementRole: role,
+          elementType: normType,
+          workspaceInstanceId: obj.workspaceInstanceId || null,
+          x: Math.round(obj.x),
+          y: Math.round(obj.y),
+          width: Math.max(20, Math.round(obj.w)),
+          height: isKioskMarker ? 80 : (isWall ? fixedThickness : Math.max(20, Math.round(obj.h))),
+          rotation: (obj.rotation || 0) as 0 | 90 | 180 | 270,
+          zIndex: index + 1,
+          label: obj.name || (isKioskMarker ? 'You Are Here' : null),
+          properties: {
+            color: obj.color,
+            ...(isKioskMarker ? { markerType: 'KIOSK_YOU_ARE_HERE' } : {}),
+          },
+          isLocked: false,
+        };
+      });
+
+      const res = await fetch('/api/admin/maps/draft', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          floorId: selectedFloorId,
+          canvasWidth: canvasDimensions.width,
+          canvasHeight: canvasDimensions.height,
+          gridSize: canvasDimensions.gridSize,
+          elements: elementsPayload,
+          actorUserId: user?.id ?? null,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to save draft map');
+      }
+
+      setSaveState(`Saved at ${new Date().toLocaleTimeString()}`);
+    } catch (err: any) {
+      setSaveState('Save failed');
+      setErrorMsg(err.message || 'Failed to save draft map');
+    }
+  };
+
+  // Publish map
+  const handlePublish = async () => {
+    if (!selectedFloorId) return;
+
+    try {
+      setActionLoading(true);
+      setErrorMsg(null);
+
+      // Save draft first before publishing
+      await handleSaveDraft();
+
+      const res = await fetch('/api/admin/maps/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          floorId: selectedFloorId,
+          actorUserId: user?.id ?? null,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Publish failed validation');
+      }
+
+      setShowPublishModal(false);
+      setSuccessMsg('Map published successfully! Live customer & kiosk maps updated.');
+      setTimeout(() => setSuccessMsg(null), 5000);
+      setSaveState('Published');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Publishing error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRemoveObject = (id: string) => {
+    setBuilderObjects(prev => prev.filter(o => o.id !== id));
+    if (selectedObjId === id) setSelectedObjId(null);
+    setSaveState('Unsaved changes');
+  };
+
+  const handleRotate = (id: string) => {
+    setBuilderObjects(prev =>
+      prev.map(o => {
+        if (o.id !== id) return o;
+        const nextRot = ((o.rotation || 0) + 90) % 360;
+        return { ...o, rotation: nextRot };
+      })
+    );
+    setSaveState('Unsaved changes');
+  };
+
+  const handleDuplicateObject = (id: string) => {
+    const target = builderObjects.find(o => o.id === id);
+    if (!target || target.bookable || target.elementRole === 'WORKSPACE') return;
+
+    const canvasW = canvasDimensions.width;
+    const canvasH = canvasDimensions.height;
+
+    const newX = Math.min(target.x + 20, canvasW - target.w);
+    const newY = Math.min(target.y + 20, canvasH - target.h);
+
+    const newObj = {
+      ...target,
+      id: 'str-' + Date.now(),
+      name: target.name,
+      x: Math.max(0, newX),
+      y: Math.max(0, newY),
+      w: target.w,
+      h: target.h,
+      rotation: target.rotation || 0,
+      workspaceInstanceId: null,
+      bookable: false,
+      elementRole: 'STRUCTURE',
+    };
+
+    setBuilderObjects(prev => [...prev, newObj]);
+    setSelectedObjId(newObj.id);
+    setSaveState('Unsaved changes');
+  };
+
+  const handleColorChange = (newColor: string) => {
+    if (!selectedObj) return;
+    setBuilderObjects(prev =>
+      prev.map(o => {
+        if (o.id === selectedObj.id) {
+          return { ...o, color: newColor };
+        }
+        if (
+          applyColorToSimilar &&
+          !selectedObj.bookable &&
+          !o.bookable &&
+          (o.elementType === selectedObj.elementType || (o.name && o.name === selectedObj.name))
+        ) {
+          return { ...o, color: newColor };
+        }
+        return o;
+      })
+    );
+    setSaveState('Unsaved changes');
+  };
+
+  const selectedObj = builderObjects.find(o => o.id === selectedObjId);
+  const currentFloor = floors.find(f => f.id === selectedFloorId);
+
+  const paletteStructure = ['Wall', 'Glass', 'Thin Wall', 'Doorway', 'Restroom', 'Pantry', 'Emergency Exit'];
+
+  const publishChecks = [
+    { text: 'All workspaces inside canvas bounds', color: 'var(--da-success)', icon: '✓' },
+    { text: 'No overlapping bookable workspaces', color: 'var(--da-success)', icon: '✓' },
+    { text: `${builderObjects.filter(o => o.bookable).length} instances configured on floor`, color: 'var(--da-text-secondary)', icon: 'ℹ' },
+    { text: 'Draft map saved to database', color: 'var(--da-success)', icon: '✓' },
+  ];
+
+  return (
+    <main data-screen-label="Map Builder" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {/* Notifications */}
+      {errorMsg && (
+        <div style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#b91c1c', padding: '8px 16px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 50 }}>
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg(null)} style={{ border: 'none', background: 'none', color: '#b91c1c', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+      {successMsg && (
+        <div style={{ background: '#ecfdf5', borderBottom: '1px solid #a7f3d0', color: '#065f46', padding: '8px 16px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 50 }}>
+          <span>{successMsg}</span>
+          <button onClick={() => setSuccessMsg(null)} style={{ border: 'none', background: 'none', color: '#065f46', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: '#fff', borderBottom: '1px solid var(--da-border)', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          {floors.length > 0 ? (
+            <select
+              value={selectedFloorId || ''}
+              onChange={(e) => handleFloorChange(e.target.value)}
+              style={{ border: '1px solid var(--da-border)', borderRadius: '8px', padding: '7px 10px', fontSize: '12px', fontFamily: 'var(--da-font-family)', background: '#fff', fontWeight: 700 }}
+            >
+              {floors.map(f => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--da-text-secondary)' }}>No Floors Available</span>
+          )}
+
+          <button
+            onClick={() => setShowFloorModal(true)}
+            style={{ border: '1px solid var(--da-border)', background: 'var(--da-canvas)', borderRadius: '8px', padding: '7px 12px', fontSize: '12px', fontWeight: 700, color: 'var(--da-brand-dark)', cursor: 'pointer' }}
+          >
+            + Add Floor
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button onClick={handleZoomOut} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>−</button>
+          <span style={{ fontSize: '12px', fontFamily: 'var(--da-font-family)', width: '40px', textAlign: 'center' }}>{Math.round(builderZoom * 100)}%</span>
+          <button onClick={handleZoomIn} style={{ width: '36px', height: '36px', borderRadius: '8px', border: '1px solid var(--da-border)', background: '#fff', cursor: 'pointer', fontSize: '15px', fontWeight: 700 }}>+</button>
+          <button onClick={handleFitView} style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '6px', padding: '6px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Fit View</button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '11px', fontFamily: 'var(--da-font-family)', color: 'var(--da-text-secondary)' }}>{saveState}</span>
+          <button
+            onClick={handleSaveDraft}
+            disabled={floors.length === 0}
+            style={{ border: '1px solid var(--da-border)', background: '#fff', borderRadius: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: 700, cursor: floors.length === 0 ? 'not-allowed' : 'pointer' }}
+          >
+            Save Draft
+          </button>
+          <button
+            onClick={() => setShowPublishModal(true)}
+            disabled={floors.length === 0 || builderObjects.length === 0}
+            style={{ background: 'linear-gradient(0deg, var(--da-brand-dark) 70%, #154A32)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: (floors.length === 0 || builderObjects.length === 0) ? 'not-allowed' : 'pointer', opacity: (floors.length === 0 || builderObjects.length === 0) ? 0.6 : 1 }}
+          >
+            Publish
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0, width: '100%' }}>
+        {/* Palette */}
+        <aside style={{ width: '200px', background: '#fff', borderRight: '1px solid var(--da-border)', padding: '14px', overflowY: 'auto', flexShrink: 0 }}>
+          <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.05em', marginBottom: '8px', fontFamily: 'var(--da-font-family)' }}>WORKSPACES</div>
+          {templates.length === 0 ? (
+            <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', padding: '6px 0' }}>No templates yet</div>
+          ) : (
+            templates.map((pw, i) => (
+              <div key={pw.id || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderTop: '1px solid var(--da-border-light)' }}>
+                <span style={{ fontSize: '12px', color: 'var(--da-text-primary)', fontFamily: 'var(--da-font-family)', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {pw.name}
+                </span>
+                <button
+                  onClick={() => handleAddWorkspace(pw)}
+                  style={{ border: '1px solid var(--da-border)', background: 'var(--da-canvas)', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  + Add
+                </button>
+              </div>
+            ))
+          )}
+
+          <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.05em', margin: '16px 0 8px', fontFamily: 'var(--da-font-family)' }}>STRUCTURE</div>
+          {paletteStructure.map((ps, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderTop: '1px solid var(--da-border-light)' }}>
+              <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)' }}>{ps}</span>
+              <button
+                onClick={() => handleAddStructure(ps)}
+                style={{ border: '1px solid var(--da-border)', background: 'var(--da-canvas)', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                + Add
+              </button>
+            </div>
+          ))}
+
+          <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.05em', margin: '16px 0 8px', fontFamily: 'var(--da-font-family)' }}>KIOSK ORIENTATION</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderTop: '1px solid var(--da-border-light)' }}>
+            <span style={{ fontSize: '12px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>📍</span> You Are Here
+            </span>
+            <button
+              onClick={handleAddKioskMarker}
+              style={{ border: '1px solid var(--da-border)', background: 'var(--da-canvas)', borderRadius: '6px', padding: '3px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              {builderObjects.some(o => o.elementType === 'KIOSK_YOU_ARE_HERE' || o.elementRole === 'INFORMATION') ? 'Select' : '+ Add'}
+            </button>
+          </div>
+        </aside>
+
+        {/* Canvas Area */}
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflow: 'auto',
+            background: '#fff',
+            position: 'relative',
+            padding: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'flex-start',
+          }}
+        >
+          {floors.length === 0 ? (
+            /* Empty state when no floor is in the database */
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+              <div style={{ background: '#fff', border: '1px solid var(--da-border)', borderRadius: '16px', padding: '36px', maxWidth: '440px', boxShadow: 'var(--da-shadow-md)' }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--da-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '20px' }}>
+                  🏢
+                </div>
+                <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 8px' }}>
+                  Add a floor first in the canvas
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--da-text-secondary)', margin: '0 0 20px', lineHeight: 1.5, fontFamily: 'var(--da-font-family)' }}>
+                  No floor was found in the database. Please create a floor first to place workspaces, build layouts, save drafts, and publish your live floor map.
+                </p>
+                <button
+                  onClick={() => setShowFloorModal(true)}
+                  style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '11px 22px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--da-font-family)' }}
+                >
+                  + Add Floor Now
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                width: `${canvasDimensions.width * builderZoom}px`,
+                height: `${canvasDimensions.height * builderZoom}px`,
+                minWidth: '100%',
+                minHeight: '100%',
+                position: 'relative',
+                flexShrink: 0,
+                background: '#fff',
+              }}
+            >
+              <div
+                ref={canvasRef}
+                style={{
+                  width: `${canvasDimensions.width}px`,
+                  height: `${canvasDimensions.height}px`,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  background: '#fff',
+                  transform: `scale(${builderZoom})`,
+                  transformOrigin: 'top left',
+                  backgroundImage: gridOn ? 'radial-gradient(var(--da-border) 1px, transparent 1px)' : 'none',
+                  backgroundSize: `${canvasDimensions.gridSize}px ${canvasDimensions.gridSize}px`,
+                  overflow: 'hidden',
+                }}
+              >
+              {builderObjects.map((obj) => {
+                const isRestroom = obj.elementType?.toLowerCase().includes('restroom') || obj.name?.toLowerCase().includes('restroom');
+                const isPantry = obj.elementType?.toLowerCase().includes('pantry') || obj.name?.toLowerCase().includes('pantry');
+                const isEmergencyExit = obj.elementType?.toLowerCase().includes('exit') || obj.elementType?.toLowerCase().includes('emergency') || obj.name?.toLowerCase().includes('exit') || obj.name?.toLowerCase().includes('emergency');
+                const isAmenity = obj.elementRole === 'AMENITY' || isRestroom || isPantry || isEmergencyExit;
+                const isKioskMarker =
+                  obj.elementType === 'KIOSK_YOU_ARE_HERE' ||
+                  obj.elementRole === 'INFORMATION' ||
+                  obj.name?.toLowerCase() === 'you are here';
+                const isWall = obj.elementType?.toLowerCase().includes('wall') || obj.name?.toLowerCase().includes('wall');
+                const contrastColor = getContrastColor(obj.color);
+
+                return (
+                  <div key={obj.id} style={{ position: 'absolute', left: obj.x, top: obj.y, width: obj.w, height: obj.h, transform: `rotate(${obj.rotation}deg)` }}>
+                    <button
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        if (e.button !== 0) return;
+                        setSelectedObjId(obj.id);
+                        setShowInspector(true);
+                        setDragState({
+                          id: obj.id,
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          startObjX: obj.x,
+                          startObjY: obj.y
+                        });
+                      }}
+                      onClick={() => { setSelectedObjId(obj.id); setShowInspector(true); }}
+                      aria-pressed={selectedObjId === obj.id}
+                      style={{
+                        width: '100%', height: '100%',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '11px', fontWeight: 700, textAlign: 'center', cursor: 'pointer',
+                        fontFamily: 'var(--da-font-family)', padding: '4px', lineHeight: 1.2,
+                        background: isKioskMarker ? (obj.color || '#DC2626') : (obj.color || (obj.bookable ? 'rgba(200, 244, 81, 0.4)' : '#F3F7F4')),
+                        border: selectedObjId === obj.id ? '2px solid var(--da-brand-dark)' : (isKioskMarker ? '2px solid #fff' : '1px solid var(--da-border)'),
+                        borderRadius: isKioskMarker ? '14px' : (isWall ? '2px' : '8px'),
+                        boxShadow: isKioskMarker ? '0 4px 12px rgba(220, 38, 38, 0.35)' : 'none',
+                        color: isKioskMarker ? '#ffffff' : contrastColor,
+                        boxSizing: 'border-box',
+                        overflow: 'hidden',
+                        position: 'relative'
+                      }}
+                    >
+                      {obj.bookable ? (
+                        <span style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {obj.name}
+                        </span>
+                      ) : isKioskMarker ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="You Are Here">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z" fill="#ffffff" stroke="#DC2626" strokeWidth="1.5" />
+                            <circle cx="12" cy="10" r="3" fill="#DC2626" />
+                          </svg>
+                          <span style={{ fontSize: '10px', fontWeight: 800, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                            {obj.name || 'You Are Here'}
+                          </span>
+                        </div>
+                      ) : isAmenity ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px', pointerEvents: 'none', maxWidth: '100%', maxHeight: '100%' }}>
+                          <AmenityIcon type={obj.elementType} name={obj.name} color={contrastColor} />
+                          <span style={{ fontSize: '10px', fontWeight: 700, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.9 }}>
+                            {obj.name}
+                          </span>
+                        </div>
+                      ) : null}
+                    </button>
+                  {selectedObjId === obj.id && (
+                    <div
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (e.button !== 0) return;
+                        setResizeState({
+                          id: obj.id,
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          startObjW: obj.w,
+                          startObjH: obj.h,
+                          startObjX: obj.x,
+                          startObjY: obj.y,
+                        });
+                      }}
+                      style={{
+                        position: 'absolute',
+                        right: '-4px',
+                        bottom: (obj.elementType?.toLowerCase().includes('wall') || obj.name?.toLowerCase().includes('wall')) ? 'calc(50% - 6px)' : '-4px',
+                        width: '12px',
+                        height: '12px',
+                        background: 'var(--da-brand-dark)',
+                        borderRadius: '50%',
+                        cursor: (obj.elementType?.toLowerCase().includes('wall') || obj.name?.toLowerCase().includes('wall'))
+                          ? ((obj.rotation === 90 || obj.rotation === 270) ? 'ns-resize' : 'ew-resize')
+                          : 'nwse-resize',
+                        border: '2px solid #fff'
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Inspector */}
+        {showInspector && selectedObj && (
+          <aside style={{ width: '250px', background: '#fff', borderLeft: '1px solid var(--da-border)', padding: '18px', flexShrink: 0, overflowY: 'auto' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 14px' }}>{selectedObj.name}</h3>
+
+            {selectedObj.bookable && selectedObj.template && (
+              <>
+                <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '2px' }}>Template</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--da-text-primary)', marginBottom: '14px' }}>{selectedObj.template}</div>
+              </>
+            )}
+
+            <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '4px' }}>Display Name</div>
+            <input
+              value={selectedObj.name}
+              onChange={(e) => {
+                const val = e.target.value;
+                setBuilderObjects(prev => prev.map(o => o.id === selectedObj.id ? { ...o, name: val } : o));
+                setSaveState('Unsaved changes');
+              }}
+              style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '8px 10px', fontSize: '13px', marginBottom: '14px', fontFamily: 'var(--da-font-family)', boxSizing: 'border-box' }}
+            />
+
+            {selectedObj.bookable && (
+              <>
+                <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '4px' }}>Status</div>
+                <select
+                  value={selectedObj.status || 'ACTIVE'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBuilderObjects(prev => prev.map(o => o.id === selectedObj.id ? { ...o, status: val } : o));
+                    setSaveState('Unsaved changes');
+                  }}
+                  style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '8px 10px', fontSize: '13px', marginBottom: '14px', fontFamily: 'var(--da-font-family)', boxSizing: 'border-box', background: '#fff' }}
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="MAINTENANCE">Maintenance</option>
+                  <option value="UNAVAILABLE">Unavailable</option>
+                </select>
+              </>
+            )}
+
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--da-text-secondary)', fontFamily: 'var(--da-font-family)', marginBottom: '4px' }}>Color</div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="color"
+                  value={selectedObj.color && selectedObj.color.startsWith('#') && selectedObj.color.length === 7 ? selectedObj.color : '#009689'}
+                  onInput={(e) => handleColorChange((e.target as HTMLInputElement).value)}
+                  onChange={(e) => handleColorChange(e.target.value)}
+                  style={{ width: '38px', height: '38px', border: '1px solid var(--da-border)', borderRadius: '8px', cursor: 'pointer', padding: '2px', background: '#fff' }}
+                />
+                <input
+                  type="text"
+                  value={selectedObj.color || ''}
+                  placeholder="#009689"
+                  onChange={(e) => handleColorChange(e.target.value)}
+                  style={{ flex: 1, border: '1px solid var(--da-border)', borderRadius: '8px', padding: '8px 10px', fontSize: '13px', fontFamily: 'var(--da-font-family)', boxSizing: 'border-box' }}
+                />
+              </div>
+              {!selectedObj.bookable && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--da-text-secondary)', cursor: 'pointer', marginTop: '6px' }}>
+                  <input
+                    type="checkbox"
+                    checked={applyColorToSimilar}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setApplyColorToSimilar(checked);
+                      if (checked && selectedObj.color) {
+                        handleColorChange(selectedObj.color);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  Apply color to all similar structures
+                </label>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+              <button
+                onClick={() => handleRotate(selectedObj.id)}
+                style={{ flex: 1, border: '1px solid var(--da-border)', background: 'var(--da-canvas)', color: 'var(--da-brand-dark)', borderRadius: '8px', padding: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Rotate ({selectedObj.rotation || 0}°)
+              </button>
+              {(!selectedObj.bookable && selectedObj.elementRole !== 'WORKSPACE' && selectedObj.elementType !== 'KIOSK_YOU_ARE_HERE' && selectedObj.elementRole !== 'INFORMATION') && (
+                <button
+                  onClick={() => handleDuplicateObject(selectedObj.id)}
+                  style={{ flex: 1, border: '1px solid var(--da-border)', background: 'var(--da-canvas)', color: 'var(--da-brand-dark)', borderRadius: '8px', padding: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Duplicate
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => handleRemoveObject(selectedObj.id)}
+              style={{ width: '100%', border: '1px solid var(--da-brand-dark)', background: '#fff', color: 'var(--da-brand-dark)', borderRadius: '8px', padding: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              Remove from Map
+            </button>
+          </aside>
+        )}
+      </div>
+
+      {/* Add Floor Modal */}
+      {showFloorModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(12,59,39,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#fff', borderRadius: '14px', padding: '26px', maxWidth: '400px', width: '90%' }}>
+            <h3 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 12px' }}>Add New Floor</h3>
+            <form onSubmit={handleCreateFloor}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--da-text-primary)', marginBottom: '6px' }}>Floor Name</label>
+              <input
+                type="text"
+                value={newFloorName}
+                onChange={(e) => setNewFloorName(e.target.value)}
+                placeholder="e.g. Ground Floor, 2nd Floor"
+                required
+                style={{ width: '100%', border: '1px solid var(--da-border)', borderRadius: '8px', padding: '10px 12px', fontSize: '14px', marginBottom: '20px', fontFamily: 'var(--da-font-family)', boxSizing: 'border-box' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowFloorModal(false)}
+                  style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionLoading}
+                  style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer' }}
+                >
+                  {actionLoading ? 'Creating...' : 'Create Floor'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Publish Confirmation Modal */}
+      {showPublishModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(12,59,39,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#fff', borderRadius: '14px', padding: '26px', maxWidth: '440px', width: '90%' }}>
+            <h3 style={{ fontSize: '17px', fontWeight: 800, color: 'var(--da-brand-dark)', margin: '0 0 8px' }}>Publish map?</h3>
+            <p style={{ fontSize: '13px', color: 'var(--da-text-primary)', margin: '0 0 16px' }}>
+              This will immediately replace the live map shown to customers and kiosk users on {currentFloor?.name || 'this floor'}.
+            </p>
+            <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--da-text-secondary)', letterSpacing: '.04em', marginBottom: '8px', fontFamily: 'var(--da-font-family)' }}>VALIDATION</div>
+            {publishChecks.map((pc, i) => (
+              <div key={i} style={{ fontSize: '13px', color: pc.color, marginBottom: '6px' }}>{pc.icon} {pc.text}</div>
+            ))}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => setShowPublishModal(false)}
+                style={{ background: 'transparent', border: '1px solid var(--da-border)', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={handlePublish}
+                style={{ background: 'var(--da-brand-dark)', color: '#fff', border: 'none', padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: actionLoading ? 'not-allowed' : 'pointer' }}
+              >
+                {actionLoading ? 'Publishing...' : 'Confirm Publish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}

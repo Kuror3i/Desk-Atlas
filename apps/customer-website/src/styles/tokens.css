@@ -1,0 +1,21 @@
+:root {
+  --da-surface: #ffffff;
+  --da-canvas: #f3f7f4;
+  --da-primary: #0c3b27;
+  --da-accent: #c8f451;
+  --da-brand-dark: #0c3b27;
+  --da-brand-accent: #c8f451;
+  --da-info: #e0efe4;
+  --da-attention: #fcf060;
+  --da-soft: #fffcdd;
+  --da-success: #22c55e;
+  --da-danger: #ef4444;
+  --da-text-primary: #12251a;
+  --da-text-secondary: #65736a;
+  --da-text-inverse: #ffffff;
+  --da-border: #dce6df;
+  --da-border-light: #e1e9e3;
+  --da-font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  --da-shadow-md: 0 4px 12px rgba(12, 59, 39, 0.08);
+  --da-shadow-lg: 0 8px 24px rgba(12, 59, 39, 0.1);
+}

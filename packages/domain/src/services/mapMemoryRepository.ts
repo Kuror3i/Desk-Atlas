@@ -1,0 +1,213 @@
+import type { Floor } from '../models/workspace';
+import type {
+  FloorMap,
+  MapElement,
+  MapElementInput,
+  MapPublishResult,
+  MapRepository,
+  MapVersion,
+  PublishMapDraftInput,
+  SaveMapDraftInput,
+  WorkspaceInstancePlacement,
+} from '../models/map';
+
+export class InMemoryMapRepository implements MapRepository {
+  private floors = new Map<string, Floor>();
+  private workspaceInstances = new Map<string, WorkspaceInstancePlacement>();
+  private versions = new Map<string, MapVersion>();
+  private elements = new Map<string, MapElement[]>();
+  private sequence = 1;
+
+  constructor(input?: { floors?: Floor[]; workspaceInstances?: WorkspaceInstancePlacement[] }) {
+    const defaultFloor: Floor = {
+      id: 'floor-default',
+      name: 'Main Floor',
+      floorNumber: 1,
+      displayOrder: 0,
+      isActive: true,
+    };
+
+    for (const floor of input?.floors ?? [defaultFloor]) {
+      this.floors.set(floor.id, floor);
+    }
+
+    for (const instance of input?.workspaceInstances ?? []) {
+      this.workspaceInstances.set(instance.id, instance);
+    }
+  }
+
+  async getDefaultFloor(): Promise<Floor> {
+    const floor = Array.from(this.floors.values())
+      .filter((candidate) => candidate.isActive)
+      .sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name))[0];
+    if (!floor) throw new Error('No active floor exists');
+    return floor;
+  }
+
+  async getFloor(floorId: string): Promise<Floor | null> {
+    return this.floors.get(floorId) ?? null;
+  }
+
+  async getWorkspaceInstance(instanceId: string): Promise<WorkspaceInstancePlacement | null> {
+    return this.workspaceInstances.get(instanceId) ?? null;
+  }
+
+  async loadDraft(floorId: string): Promise<FloorMap | null> {
+    return this.loadByStatus(floorId, 'DRAFT');
+  }
+
+  async loadPublished(floorId: string): Promise<FloorMap | null> {
+    return this.loadByStatus(floorId, 'PUBLISHED');
+  }
+
+  async listVersions(floorId: string): Promise<MapVersion[]> {
+    return Array.from(this.versions.values())
+      .filter((version) => version.floorId === floorId)
+      .sort((a, b) => a.versionNumber - b.versionNumber);
+  }
+
+  async saveDraft(
+    input: Required<Omit<SaveMapDraftInput, 'actorUserId'>> & { actorUserId: string | null }
+  ): Promise<FloorMap> {
+    const floor = this.requireFloor(input.floorId);
+    const existingDraft = await this.loadDraft(input.floorId);
+    const version =
+      existingDraft?.version ??
+      ({
+        id: this.nextId('map-version'),
+        floorId: input.floorId,
+        versionNumber: this.nextVersionNumber(input.floorId),
+        status: 'DRAFT',
+        canvasWidth: input.canvasWidth,
+        canvasHeight: input.canvasHeight,
+        gridSize: input.gridSize,
+        createdByUserId: input.actorUserId,
+        publishedByUserId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        publishedAt: null,
+      } satisfies MapVersion);
+
+    const updatedVersion: MapVersion = {
+      ...version,
+      canvasWidth: input.canvasWidth,
+      canvasHeight: input.canvasHeight,
+      gridSize: input.gridSize,
+      updatedAt: new Date().toISOString(),
+    };
+    const updatedElements = input.elements.map((element, index) => this.createElement(updatedVersion.id, element, index));
+
+    this.versions.set(updatedVersion.id, updatedVersion);
+    this.elements.set(updatedVersion.id, updatedElements);
+
+    return {
+      floor,
+      version: updatedVersion,
+      elements: updatedElements,
+    };
+  }
+
+  async publishDraft(input: PublishMapDraftInput): Promise<MapPublishResult> {
+    const floor = this.requireFloor(input.floorId);
+    const draft = await this.loadDraft(input.floorId);
+    if (!draft) throw new Error(`No draft map exists for floor ${input.floorId}`);
+
+    const archivedVersionIds: string[] = [];
+    for (const version of this.versions.values()) {
+      if (version.floorId === input.floorId && version.status === 'PUBLISHED') {
+        const archived: MapVersion = {
+          ...version,
+          status: 'ARCHIVED',
+          updatedAt: new Date().toISOString(),
+        };
+        this.versions.set(version.id, archived);
+        archivedVersionIds.push(version.id);
+      }
+    }
+
+    const publishedVersion: MapVersion = {
+      ...draft.version,
+      status: 'PUBLISHED',
+      publishedByUserId: input.actorUserId ?? null,
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.versions.set(publishedVersion.id, publishedVersion);
+
+    return {
+      published: {
+        floor,
+        version: publishedVersion,
+        elements: this.cloneElements(publishedVersion.id),
+      },
+      archivedVersionIds,
+    };
+  }
+
+  private async loadByStatus(floorId: string, status: 'DRAFT' | 'PUBLISHED'): Promise<FloorMap | null> {
+    const floor = this.floors.get(floorId);
+    if (!floor) return null;
+
+    const version = Array.from(this.versions.values()).find(
+      (candidate) => candidate.floorId === floorId && candidate.status === status
+    );
+    if (!version) return null;
+
+    return {
+      floor,
+      version: { ...version },
+      elements: this.cloneElements(version.id),
+    };
+  }
+
+  private createElement(mapVersionId: string, input: MapElementInput, index: number): MapElement {
+    return {
+      id: input.id ?? this.nextId('map-element'),
+      mapVersionId,
+      elementRole: input.elementRole,
+      elementType: input.elementType,
+      workspaceInstanceId: input.workspaceInstanceId ?? null,
+      x: input.x,
+      y: input.y,
+      width: input.width,
+      height: input.height,
+      rotation: input.rotation ?? 0,
+      zIndex: input.zIndex ?? index,
+      label: input.label ?? null,
+      properties: { ...(input.properties ?? {}) },
+      isLocked: input.isLocked ?? false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private cloneElements(mapVersionId: string): MapElement[] {
+    return (this.elements.get(mapVersionId) ?? [])
+      .map((element) => ({
+        ...element,
+        properties: { ...element.properties },
+      }))
+      .sort((a, b) => a.zIndex - b.zIndex || a.id.localeCompare(b.id));
+  }
+
+  private requireFloor(floorId: string): Floor {
+    const floor = this.floors.get(floorId);
+    if (!floor) throw new Error(`Floor not found: ${floorId}`);
+    return floor;
+  }
+
+  private nextVersionNumber(floorId: string): number {
+    return (
+      Math.max(
+        0,
+        ...Array.from(this.versions.values())
+          .filter((version) => version.floorId === floorId)
+          .map((version) => version.versionNumber)
+      ) + 1
+    );
+  }
+
+  private nextId(prefix: string): string {
+    return `${prefix}-${this.sequence++}`;
+  }
+}

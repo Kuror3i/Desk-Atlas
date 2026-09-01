@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@theme {
+  --color-border: var(--da-border);
+  --color-border-light: var(--da-border-light);
+  --color-input: var(--da-border);
+  --color-ring: var(--da-accent);
+  --color-background: var(--da-canvas);
+  --color-foreground: var(--da-text-primary);
+  
+  --color-primary: var(--da-primary);
+  --color-primary-foreground: var(--da-text-inverse);
+  
+  --color-secondary: var(--da-info);
+  --color-secondary-foreground: var(--da-primary);
+  
+  --color-destructive: var(--da-danger);
+  --color-destructive-foreground: var(--da-text-inverse);
+  
+  --color-muted: var(--da-surface);
+  --color-muted-foreground: var(--da-text-secondary);
+  
+  --color-accent: var(--da-accent);
+  --color-accent-foreground: var(--da-primary);
+  
+  --color-popover: var(--da-surface);
+  --color-popover-foreground: var(--da-text-primary);
+  
+  --color-card: var(--da-surface);
+  --color-card-foreground: var(--da-text-primary);
+  
+  --radius-lg: var(--da-radius-lg);
+  --radius-md: var(--da-radius-md);
+  --radius-sm: var(--da-radius-sm);
+}
+
+@layer base {
+  :root {
+    /* Surface */
+    --da-surface: #FFFFFF;
+    --da-canvas: #F3F7F4;
+
+    /* Brand */
+    --da-primary: #0C3B27;
+    --da-accent: #C8F451;
+    --da-brand-dark: #0C3B27;
+    --da-brand-accent: #C8F451;
+
+    /* Semantic */
+    --da-info: #E0EFE4;
+    --da-attention: #FCF060;
+    --da-soft: #FFFCDD;
+    --da-success: #22C55E;
+    --da-danger: #EF4444;
+
+    /* Text */
+    --da-text-primary: #12251A;
+    --da-text-secondary: #65736A;
+    --da-text-inverse: #FFFFFF;
+
+    /* Border */
+    --da-border: #DCE6DF;
+    --da-border-light: #E1E9E3;
+
+    /* Typography */
+    --da-font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+    /* Spacing scale */
+    --da-space-1: 4px;
+    --da-space-2: 8px;
+    --da-space-3: 12px;
+    --da-space-4: 16px;
+    --da-space-5: 20px;
+    --da-space-6: 24px;
+    --da-space-8: 32px;
+    --da-space-10: 40px;
+    --da-space-12: 48px;
+
+    /* Radius */
+    --da-radius-sm: 6px;
+    --da-radius-md: 10px;
+    --da-radius-lg: 14px;
+    --da-radius-xl: 20px;
+    --da-radius-full: 9999px;
+
+    /* Shadow */
+    --da-shadow-sm: 0 1px 2px rgba(12, 59, 39, 0.05);
+    --da-shadow-md: 0 4px 12px rgba(12, 59, 39, 0.08);
+    --da-shadow-lg: 0 8px 24px rgba(12, 59, 39, 0.10);
+  }
+
+  body {
+    background-color: var(--da-canvas);
+    color: var(--da-text-primary);
+    font-family: var(--da-font-family);
+    margin: 0;
+  }
+}
